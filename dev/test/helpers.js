@@ -4,7 +4,7 @@
 const p = require('../src/policy');
 
 // Resolves the planning limit for an invoking message the way the skill does.
-const limitFor = (message, saved = 'none', runtime) => p.resolveLimit(p.parseInvocation(message), saved, runtime);
+const limitFor = (message, saved = 'none', runtime, extra) => p.resolveLimit(p.parseInvocation(message), saved, runtime, extra);
 
 const BASELINE = limitFor('/contextestimate'); // 128k conservative baseline, model window unknown
 const SOL = limitFor('/contextestimate model=gpt-6.1-sol'); // documented Work default, 500k

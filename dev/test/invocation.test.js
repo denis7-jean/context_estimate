@@ -105,7 +105,7 @@ test('the neutral recommendation spells out the retry step with valid @ examples
 test('SKILL.md states the retry flow, parameter scope, and evidence rules', () => {
   assert.match(skill, /A separate later message containing only `model=\.\.\.` or `limit=\.\.\.` is not an invocation unless it also selects this skill, and it never updates an earlier report/);
   assert.match(skill, /the user invokes or selects this skill again with the parameter in that same message/);
-  assert.match(skill, /apply the parameter to that run only and recalculate the estimate from the visible conversation that is accessible now; do not edit or build on the previous report's numbers/);
+  assert.match(skill, /apply the parameter to that run only and recalculate from the visible conversation accessible now; do not edit or build on the previous report's numbers/);
   assert.match(skill, /`@contextestimate limit=250000` or `\/contextestimate model=gpt-6\.1-sol`/);
   assert.match(skill, /OpenAI documents `@` as the way to select a skill in ChatGPT/);
   assert.match(skill, /never tell the user it is a registered command/);

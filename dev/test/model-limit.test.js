@@ -43,6 +43,7 @@ test('precedence 3: the documented GPT-6.1 Sol / Work default is used when the m
   assert.deepEqual(SOL, {
     value: 500000,
     source: 'documented',
+    via: 'registry',
     label: 'documented GPT-6.1 Sol / Work default',
     model: 'gpt-6.1-sol',
     modelSource: 'user',

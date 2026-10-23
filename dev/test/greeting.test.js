@@ -58,10 +58,9 @@ test('non-countable material is excluded from the transcript', () => {
 });
 
 test('SKILL.md says not to count the non-countable material the fixture excludes', () => {
-  assert.match(skill, /Do not count or invent sizes for: system or developer instructions, this skill's text, memory, tool definitions, hidden reasoning, images, audio, or any content you cannot see/);
-  assert.match(skill, /If your total for such a chat is in the thousands, you are probably counting this skill's text, instructions, memory, tool definitions, or your own reasoning, none of which are countable/);
-  assert.match(skill, /a four-message greeting is well under 1k/);
-  assert.match(skill, /Your total should not depend on which model is selected, only on the text accessible now/);
+  assert.match(skill, /system and developer instructions, tool definitions, hidden reasoning, memory and context metadata, the selected model's name, plan labels, and images, audio, or any content you cannot see\. Do not count or invent sizes for any of these/);
+  assert.match(skill, /A total in the thousands for such a chat means non-transcript text \(this skill's text, instructions, memory, tool definitions, your own reasoning\) is being counted; recount only the messages/);
+  assert.match(skill, /The estimate depends only on the transcript text, never on which model is answering/);
 });
 
 test('the complete greeting exchange stays below 1k tokens (reference estimator and o200k_base)', () => {

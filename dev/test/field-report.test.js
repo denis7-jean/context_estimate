@@ -105,15 +105,14 @@ test('every partial or over-limit note says what it does not measure', () => {
 
 test('SKILL.md separates visible text, internal compaction, and backend usage', () => {
   assert.match(skill, /### What the number is, and is not/);
-  assert.match(skill, /\*\*Visible text\*\*/);
-  assert.match(skill, /\*\*Internal compaction or other backend state\*\*/);
-  assert.match(skill, /\*\*Actual backend token usage\*\* — you have no access to it/);
+  assert.match(skill, /The percentage is visible-text size divided by the planning limit, not ChatGPT's usage; it can be above or below the real figure/);
+  assert.match(skill, /Internal compaction and other backend state \(hidden summaries, truncation, memory, retrieval, system prompts, hidden reasoning\) cannot be inspected/);
+  assert.match(skill, /You have no access to actual backend token usage/);
   assert.match(skill, /Count every printed copy once, so three full drafts of the same document count three times/);
   assert.match(skill, /"context optimization" text that was printed in the chat counts like any other message/);
-  assert.match(skill, /You cannot inspect it\. Never say it happened, never count or subtract it, and never present it as measured/);
+  assert.match(skill, /never say it happened, never count or subtract it, and never present it as measured/);
   assert.match(skill, /Say history is summarized or truncated only when you can see a summary or a truncation marker/);
-  assert.match(skill, /not ChatGPT's usage; it can be above or below the real figure/);
-  assert.match(skill, /Turn count, chat age, and how long the chat "feels" are not evidence of size in either direction/);
+    assert.match(skill, /Turn count, chat age, and how long the chat "feels" are not evidence of size in either direction/);
   assert.match(skill, /do not stretch a count over text you cannot see/);
 });
 

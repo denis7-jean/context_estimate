@@ -10,16 +10,40 @@
 const DEFAULT_LIMIT = 128000;
 const DEFAULT_THRESHOLDS = { medium: 50, high: 70, critical: 90 };
 
-// Only limits OpenAI documents for the ChatGPT Work surface belong here.
-// Do not add API model specifications or guesses.
+// Registry of the ChatGPT Work model lineup as documented by OpenAI, mirrored
+// from the registry table in SKILL.md (tests keep the two in sync). A listing
+// is not a claim that a model is available to any particular plan, workspace,
+// role, or rollout. `window` is an exact number only where an official source
+// explicitly gives a ChatGPT Work or Work-and-Codex value; otherwise null
+// ("not documented"). Never infer a window from API documentation, output
+// limits, usage allowances, or model-family similarity.
+const HELP_WORK_URL = 'https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex';
+const LEARN_MODELS_URL = 'https://learn.chatgpt.com/docs/models';
+const REGISTRY_CHECKED = '2026-10-23';
+const REGISTRY_FRESHNESS_DAYS = 90;
+const MODEL_REGISTRY = [
+  { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', window: 500000, source: HELP_WORK_URL, checked: REGISTRY_CHECKED },
+  { id: 'gpt-6-sol', name: 'GPT-6 Sol', window: null, source: LEARN_MODELS_URL, checked: REGISTRY_CHECKED },
+  { id: 'gpt-6-luna', name: 'GPT-6 Luna', window: null, source: LEARN_MODELS_URL, checked: REGISTRY_CHECKED },
+  { id: null, name: 'GPT-6 Astra', window: null, source: LEARN_MODELS_URL, checked: REGISTRY_CHECKED },
+  { id: null, name: 'GPT-5.6 Sol', window: null, source: LEARN_MODELS_URL, checked: REGISTRY_CHECKED },
+  { id: null, name: 'GPT-5.6 Terra', window: null, source: LEARN_MODELS_URL, checked: REGISTRY_CHECKED },
+  { id: null, name: 'GPT-5.6 Luna', window: null, source: LEARN_MODELS_URL, checked: REGISTRY_CHECKED },
+];
 const DOCUMENTED_SOURCE = {
-  url: 'https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex',
-  verified: '2026-10-23',
+  url: HELP_WORK_URL,
+  verified: REGISTRY_CHECKED,
   wording: 'GPT-6.1 Sol has a default context window of 500,000 tokens in ChatGPT Work and Codex.',
 };
-const DOCUMENTED_MODEL_DEFAULTS = {
-  'gpt-6.1-sol': { name: 'GPT-6.1 Sol', limit: 500000 },
-};
+// Only the entries with a documented Work window.
+const DOCUMENTED_MODEL_DEFAULTS = Object.fromEntries(
+  MODEL_REGISTRY.filter((m) => m.window).map((m) => [m.id, { name: m.name, limit: m.window }]),
+);
+
+// Official hosts a live lookup may cite. A live value is accepted only when the
+// source also explicitly scopes it to ChatGPT Work or to Work and Codex.
+const OFFICIAL_HOSTS = ['help.openai.com', 'learn.chatgpt.com', 'openai.com', 'www.openai.com'];
+const WORK_SCOPES = ['chatgpt-work', 'work-and-codex'];
 
 const BAR_WIDTH = 20; // 5% per block
 const BAR_STYLES = {
@@ -72,6 +96,8 @@ const NOTES = {
   host: 'Note: Host-reported measurement.',
   conflictingModel: 'Note: Ignored conflicting model values.',
 };
+const staleNote = (name) =>
+  `Note: The registry entry for ${name} is older than 90 days and was not rechecked, so its window is treated as unknown.`;
 const transcriptNote = (tokenizer) =>
   `Note: Counts the supplied text with ${tokenizer}; it may not match any Work model's tokenizer or the active context.`;
 
@@ -147,7 +173,7 @@ function resolveModel({ invocation, runtime } = {}) {
 // default for the currently evidenced model; conservative baseline. `saved` is
 // the `saved_limit` value from the skill configuration ("none" or digits).
 // Derived limits are never written back to saved_limit.
-function resolveLimit(invocation, saved, runtime) {
+function resolveLimit(invocation, saved, runtime, { live, today } = {}) {
   const override = invocation && invocation.override;
   if (override && override.status === 'valid') {
     return { value: override.value, source: 'override', label: LIMIT_LABELS.override };
@@ -155,17 +181,88 @@ function resolveLimit(invocation, saved, runtime) {
   const savedStr = saved === undefined || saved === null ? 'none' : String(saved).trim();
   if (isValidLimit(savedStr)) return { value: Number(savedStr), source: 'saved', label: LIMIT_LABELS.saved };
   const model = resolveModel({ invocation, runtime });
-  const documented = model && DOCUMENTED_MODEL_DEFAULTS[model.id];
-  if (documented) {
-    return {
-      value: documented.limit,
-      source: 'documented',
-      label: `documented ${documented.name} / Work default`,
-      model: model.id,
-      modelSource: model.source,
-    };
+  if (model) {
+    const entry = findRegistryEntry(model.id);
+    const stale = Boolean(entry && isStale(entry, today));
+    if (entry && entry.window && !stale) {
+      return {
+        value: entry.window,
+        source: 'documented',
+        via: 'registry',
+        label: `documented ${entry.name} / Work default`,
+        model: model.id,
+        modelSource: model.source,
+      };
+    }
+    // A fresh lookup result applies to this invocation only; it never edits the registry.
+    if (live && acceptLiveResult(live, model.id).ok) {
+      return {
+        value: live.window,
+        source: 'documented',
+        via: 'live',
+        label: `documented ${live.name || (entry && entry.name) || model.id} / Work default; live check`,
+        model: model.id,
+        modelSource: model.source,
+      };
+    }
+    // A registry window older than the freshness limit that was not reconfirmed is treated as unknown.
+    if (stale && entry.window) return { value: DEFAULT_LIMIT, source: 'baseline', label: LIMIT_LABELS.baseline, staleModel: entry.name };
   }
   return { value: DEFAULT_LIMIT, source: 'baseline', label: LIMIT_LABELS.baseline };
+}
+
+// Registry rows match by documented ID or by the normalized model name
+// ("GPT-6 Astra" -> "gpt-6-astra"). Nothing is matched by family similarity.
+function findRegistryEntry(modelId) {
+  const key = normalizeModelId(modelId);
+  if (!key) return null;
+  return MODEL_REGISTRY.find((m) => (m.id && m.id === key) || normalizeModelId(m.name) === key) || null;
+}
+
+function daysBetween(fromISO, toISO) {
+  return Math.floor((Date.parse(toISO) - Date.parse(fromISO)) / 86400000);
+}
+
+// If today's date is not reliably known (`today` missing or invalid), the row is treated as fresh.
+function isStale(entry, today) {
+  if (!today || Number.isNaN(Date.parse(today))) return false;
+  return daysBetween(entry.checked, today) > REGISTRY_FRESHNESS_DAYS;
+}
+
+// Whether a web lookup of official sources is warranted. Ordinary estimates
+// return needed=false: no browsing is required to produce a report.
+function needsFreshnessLookup({ explicitRequest = false, modelId = null, today } = {}) {
+  const reasons = [];
+  if (explicitRequest) reasons.push('explicit request');
+  if (modelId) {
+    const entry = findRegistryEntry(modelId);
+    if (!entry) reasons.push('model absent from registry');
+    else if (isStale(entry, today)) reasons.push('registry entry older than 90 days');
+  }
+  return { needed: reasons.length > 0, reasons };
+}
+
+// A looked-up window is accepted only for the model in question, with an
+// official source that explicitly scopes the number to ChatGPT Work or Work
+// and Codex. API values, output limits, allowances, Codex-only or Chat-only
+// values, and ambiguous or inaccessible sources are not accepted.
+function acceptLiveResult(result, modelId) {
+  if (!result || typeof result !== 'object') return { ok: false, reason: 'no result' };
+  if (result.status && result.status !== 'ok') return { ok: false, reason: 'source unavailable' };
+  const key = normalizeModelId(modelId);
+  if (!key || (normalizeModelId(result.modelId) !== key && normalizeModelId(result.name) !== key)) {
+    return { ok: false, reason: 'different model' };
+  }
+  let host;
+  try {
+    host = new URL(result.url).hostname;
+  } catch {
+    return { ok: false, reason: 'no source URL' };
+  }
+  if (!OFFICIAL_HOSTS.includes(host)) return { ok: false, reason: 'not an official OpenAI source' };
+  if (!WORK_SCOPES.includes(result.scope)) return { ok: false, reason: 'not scoped to ChatGPT Work or Work and Codex' };
+  if (!Number.isInteger(result.window) || result.window <= 0) return { ok: false, reason: 'no exact window' };
+  return { ok: true };
 }
 
 function usagePercent(tokens, limit) {
@@ -251,6 +348,7 @@ function render(state) {
   const extraNotes = [];
   if (state.invalidLimitRaw !== undefined) extraNotes.push(`Note: Ignored invalid limit "${state.invalidLimitRaw}".`);
   if (state.conflictingModel) extraNotes.push(NOTES.conflictingModel);
+  if (state.limit.staleModel) extraNotes.push(staleNote(state.limit.staleModel));
   const finish = (primaryNote) => [...lines, '', primaryNote, ...extraNotes].join('\n');
 
   if (state.kind === 'unavailable') {
@@ -305,6 +403,19 @@ module.exports = {
   DEFAULT_THRESHOLDS,
   DOCUMENTED_SOURCE,
   DOCUMENTED_MODEL_DEFAULTS,
+  MODEL_REGISTRY,
+  REGISTRY_CHECKED,
+  REGISTRY_FRESHNESS_DAYS,
+  HELP_WORK_URL,
+  LEARN_MODELS_URL,
+  OFFICIAL_HOSTS,
+  WORK_SCOPES,
+  staleNote,
+  findRegistryEntry,
+  isStale,
+  daysBetween,
+  needsFreshnessLookup,
+  acceptLiveResult,
   BAR_WIDTH,
   BAR_STYLES,
   LIMIT_LABELS,

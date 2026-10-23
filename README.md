@@ -83,6 +83,25 @@ The planning limit is the first of these that applies, and its source is always 
 
 An unknown window never triggers a handoff recommendation by itself. A recommendation comes from a known planning limit and its thresholds, or from a separate explicit reason such as missing history or unmeasured attachments (which keep their `UNKNOWN` labels and "consider a handoff" advice under any limit).
 
+### Work model registry and freshness checks
+
+`SKILL.md` carries a compact registry of the ChatGPT Work models OpenAI documents, last checked **2026-10-23** against [ChatGPT Work and Codex](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex) (Help Center) and [Models](https://learn.chatgpt.com/docs/models) (ChatGPT Learn):
+
+| Model ID / name | Work context window | Source |
+| --- | --- | --- |
+| `gpt-6.1-sol` (GPT-6.1 Sol) | **500,000** ("default context window of 500,000 tokens in ChatGPT Work and Codex") | Help Center |
+| `gpt-6-sol` (GPT-6 Sol) | not documented | Learn |
+| `gpt-6-luna` (GPT-6 Luna) | not documented | Learn |
+| GPT-6 Astra (ID not documented) | not documented | Learn |
+| GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna (IDs not documented) | not documented | Learn |
+
+- A listing does not mean a model is available to every user: availability varies by plan, workspace settings, role, and rollout, and the registry is not the exact list any one account sees.
+- A window is an exact number only where an official source explicitly gives a ChatGPT Work or Work-and-Codex value. Windows are never inferred from API documentation, output limits, usage allowances, or similarity to another model, so everything marked "not documented" keeps the baseline and `UNKNOWN (model window unknown)`.
+- **Ordinary estimates do not browse.** Only if web search is available, the skill checks official OpenAI sources when you explicitly ask for current model or window information, when you give a model that isn't in the registry, or when that model's row was last checked more than 90 days ago (if it doesn't reliably know today's date, it treats the row as fresh). A looked-up value is accepted only if the source explicitly scopes that number to ChatGPT Work or Work and Codex for that model. It is used for that invocation only and labeled `documented <Model> / Work default; live check`. The skill never claims it or its registry was updated, never saves it, and never implies the model is available to your workspace.
+- If the source is inaccessible, ambiguous, stale, or API-only, or there is no search, the window stays unknown and the baseline applies. A registry window older than 90 days that can't be rechecked is treated as unknown (with a note) until you re-upload a refreshed skill or pass `limit=N`.
+- Which model is current still comes only from `model=MODEL_ID` (your assertion) or trusted runtime metadata; a lookup or the registry never decides it.
+- The live lookup has not been verified in ChatGPT Work, and no registry value has been tested there; the automated tests check policy and instruction text only.
+
 ### Getting a parameterized estimate
 
 When a report says a model-relative assessment is unavailable, the next step is explicit: **invoke or select the skill again and put the parameter in that same message.** In ChatGPT Work, type `@` to select a skill (OpenAI documents `@` for selecting a skill, for example `@skill-creator` in Work), then add the option on the same line:

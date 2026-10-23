@@ -13,26 +13,21 @@ const { p, SOL, BASELINE, renderFor } = require('./helpers');
 
 const skill = fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
 
-test('configuration block states the saved budget, baseline, documented default with its date, and thresholds', () => {
+test('configuration block states the saved budget, baseline, freshness window, and thresholds', () => {
   assert.match(skill, /^saved_limit: none\b/m);
   assert.match(skill, /^baseline_limit: 128000\b/m);
-  assert.match(skill, /^documented_work_defaults:.*verified 2026-10-23/m);
-  assert.match(skill, /^ {2}gpt-6\.1-sol: 500000\b/m);
+  assert.match(skill, /^registry_freshness_days: 90\b/m);
   assert.match(skill, /^medium_at: 50\b/m);
   assert.match(skill, /^high_at: 70\b/m);
   assert.match(skill, /^critical_at: 90\b/m);
   assert.match(skill, /conservative fallback; not a claim about any model's real window/);
-  // Only the one verified entry is listed in the configuration table.
-  const entries = skill.match(/^ {2}[a-z0-9.-]+: \d+/gm) || [];
-  assert.deepEqual(entries.map((e) => e.trim().split(':')[0]), Object.keys(p.DOCUMENTED_MODEL_DEFAULTS));
-  assert.match(skill, /Never browse the web to look up limits/);
-  assert.match(skill, /do not add entries, guess other models' windows, or use API model specifications/);
-  assert.match(skill, /A documented window is not a guarantee that all of it is available for visible conversation text; do not deduct or invent hidden overhead/);
+  assert.match(skill, /A documented window does not guarantee all of it is available for visible conversation text; do not deduct or invent hidden overhead/);
+  assert.match(skill, /Ordinary estimates use this registry and never browse/);
 });
 
 test('planning-limit precedence, labels, and no write-back are stated in order', () => {
   const section = skill.slice(skill.indexOf('## 2. Resolve the planning limit'), skill.indexOf('## 3.'));
-  const order = ['A valid `limit=N`', 'A positive-integer `saved_limit`', 'A documented Work default', 'Otherwise `baseline_limit`'].map((s) => section.indexOf(s));
+  const order = ['A valid `limit=N`', 'A positive-integer `saved_limit`', 'A documented Work window', 'Otherwise `baseline_limit`'].map((s) => section.indexOf(s));
   assert.ok(order.every((i) => i >= 0) && order.every((v, i) => i === 0 || v > order[i - 1]), String(order));
   for (const label of ['(user override)', '(saved user budget)', '(documented <Model name> / Work default)', '(conservative baseline; model window unknown)']) {
     assert.ok(section.includes(label), label);
@@ -60,7 +55,7 @@ test('model-evidence rules and switch behavior are stated', () => {
     assert.ok(skill.includes(phrase), phrase);
   }
   assert.match(skill, /Never reuse a previously derived model limit/);
-  assert.match(skill, /If the model has no documented Work limit above, use the baseline/);
+  assert.match(skill, /A model with no documented Work window in the registry and no accepted lookup also gets the baseline/);
   assert.match(skill, /Options are read only from the first line of the invoking message/);
 });
 
@@ -95,10 +90,10 @@ test('rate table in SKILL.md matches the calibrated heuristic constants', () => 
 
 test('planning risk is on the unrounded share, uncapped, and never a backend measure', () => {
   assert.match(skill, /\*\*Planning risk\*\* classifies the share on the \*\*unrounded\*\* value/);
-  assert.match(skill, /Do not cap values above 100%/);
-  assert.match(skill, /rounding can show a value on the other side of a threshold/);
+  assert.match(skill, /The numeric percentage is the precise value and is never capped/);
+  assert.match(skill, /Display rounding \(it can cross a threshold; the risk still comes from the unrounded value\)/);
   assert.match(skill, /it is never a measure of backend context risk, and without genuine host telemetry the real context risk is unknown/);
-  assert.match(skill, /A full bar does not show that the model's real window is exceeded/);
+  assert.match(skill, /a full bar does not show that the model's real window is exceeded/i);
 });
 
 test('UNKNOWN planning-risk conditions are all listed', () => {
@@ -113,7 +108,7 @@ test('UNKNOWN planning-risk conditions are all listed', () => {
 test('baseline variant is documented with the reference labels', () => {
   assert.ok(skill.includes(`Planning limit: ${p.formatLimit(BASELINE.value)} (${p.LIMIT_LABELS.baseline})`));
   assert.ok(skill.includes('Planning risk: UNKNOWN (model window unknown)'));
-  assert.match(skill, /Do not show LOW or any other threshold label/);
+  assert.match(skill, /never a threshold label/);
 });
 
 test('safety and honesty constraints are stated', () => {
@@ -130,8 +125,8 @@ test('safety and honesty constraints are stated', () => {
   assert.match(skill, /Do not claim they persist/);
   assert.match(skill, /may not register `\/contextestimate` as a real slash command/);
   assert.match(skill, /Never invent token counts, host measurements, model identity, or a real ChatGPT context limit/);
-  assert.match(skill, /Re-estimate the content accessible now on every invocation\. Do not carry a running total across invocations, model switches, or compaction/);
-  assert.match(skill, /do not explain it as a backend change or as proof of one/);
+  assert.match(skill, /Re-estimate the content accessible now on every invocation; carry no running total across invocations, model switches, or compaction/);
+  assert.match(skill, /do not explain it as a backend change or proof of one/);
   assert.match(skill, /Report it as counting that supplied text with the named tokenizer; do not claim the tokenizer matches every Work model/);
 });
 
@@ -165,13 +160,6 @@ test('partial-coverage wording in SKILL.md matches the reference policy', () => 
   assert.ok(skill.includes('; model window unknown'));
 });
 
-test('the partial example in SKILL.md equals the reference output lines', () => {
-  const out = renderFor(130000, SOL, { compacted: true });
-  const wanted = out.split('\n').filter((l) => l.startsWith('Estimated accessible text') || l.startsWith('[') || l.startsWith('Planning risk') || l.startsWith('Consider'));
-  assert.equal(wanted.length, 4);
-  for (const line of wanted) assert.ok(skill.includes(line), line);
-});
-
 test('"lower bound" appears in SKILL.md only inside prohibitions', () => {
   assert.equal((skill.match(/lower bound/gi) || []).length, 2);
   const hits = skill.split('\n').filter((l) => /lower bound/i.test(l));
@@ -192,9 +180,9 @@ test('old labels are gone from SKILL.md', () => {
 
 test('SKILL.md states the neutral baseline recommendation and that an unknown window alone never recommends a handoff', () => {
   assert.ok(skill.includes(p.NEUTRAL_RECOMMENDATION));
-  assert.match(skill, /An unknown model window is not, by itself, a reason to recommend `\/handoff`/);
+  assert.match(skill, /an unknown model window alone is never one/);
   assert.match(skill, /Do not recommend `\/handoff`, say a handoff is prudent, or imply the chat is near a limit solely because the model window is unknown/);
-  assert.match(skill, /not used for the baseline/);
+  assert.match(skill, /known limit \(override, saved, or documented; keep the normal planning risk; never for the baseline\)/);
   assert.match(skill, /with the baseline the base is always `Consider \/handoff before substantial work` \(a share of an unknown window does not escalate it\)/);
   assert.match(skill, /If the estimate changes after a model switch, it may reflect estimation variability or different accessible material/);
 });

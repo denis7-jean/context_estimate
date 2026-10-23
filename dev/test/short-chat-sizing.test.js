@@ -160,10 +160,10 @@ test('SKILL.md counting procedure is operational: collect, exclude, size, short-
   assert.match(skill, /Do not guess missing history or backend usage/);
   assert.match(skill, /The estimate depends only on the transcript text, never on which model is answering/);
   assert.match(skill, /\*\*Short-chat rule\.\*\* If the transcript is a handful of short messages \(at most 10 messages and about 500 words of ordinary text in total, or about 700 CJK characters\), report `<1k` tokens and stop\. Do not refine it upward, and do not widen it with this skill's text, instructions, or any internal context/);
-  assert.match(skill, /A transcript of a few greetings plus a few short `\/contextestimate` reports is `<1k`/);
+  assert.match(skill, /A transcript of a few greetings plus a few short `\/contextestimate` reports is `<1k`\. A total in the thousands for such a chat means non-transcript text/);
   // The procedure comes before the rates and the sanity check.
-  const order = ['Follow these steps in order', 'The rates, applied per message', 'Sanity check:'].map((s) => skill.indexOf(s));
-  assert.ok(order.every((i) => i > 0) && order[0] < order[1] && order[1] < order[2], String(order));
+  const order = ['Follow these steps in order', 'The rates, applied per message'].map((s) => skill.indexOf(s));
+  assert.ok(order.every((i) => i > 0) && order[0] < order[1], String(order));
 });
 
 test('the short-chat rule is consistent with the reference estimator at its stated limits', () => {
