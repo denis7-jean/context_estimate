@@ -3,9 +3,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const p = require('../src/policy');
+const { p, limitFor } = require('./helpers');
 
-const ASSUMED = { value: 128000, label: 'assumed' };
+const ASSUMED = limitFor('/contextestimate limit=128000'); // a user budget; bars always refer to the planning limit
 const blocks = (usage, style) => (p.bar(usage, style).match(style === 'ascii' ? /#/g : /█/g) || []).length;
 
 test('bar has a fixed width of 20 for every usage, in both styles', () => {
@@ -84,23 +84,21 @@ test('non-finite or negative usage yields an empty bar', () => {
 
 test('above 100% the bar is full but the numeric percentage stays uncapped', () => {
   const out = p.render({ kind: 'estimate', tokens: 150000, limit: ASSUMED });
-  assert.match(out, /^Estimated usage: ~117%$/m);
   assert.match(out, /^\[█{20}\] ~117% of planning limit$/m);
-  assert.match(out, /^Risk: CRITICAL$/m);
+  assert.match(out, /^Planning risk: CRITICAL$/m);
 });
 
 test('0% and sub-1% rendering keeps <1% and an honest bar', () => {
   const out = p.render({ kind: 'estimate', tokens: 6, limit: ASSUMED });
-  assert.match(out, /^Estimated usage: <1%$/m);
   assert.match(out, /^\[█░{19}\] <1% of planning limit$/m);
-  assert.match(out, /^Risk: LOW$/m);
+  assert.match(out, /^Planning risk: LOW$/m);
 });
 
-test('bar percentage always equals the numeric usage line', () => {
+test('bar percentage and fill always follow the share of the planning limit', () => {
   for (let tokens = 0; tokens <= 400000; tokens += 3137) {
     for (const flags of [{}, { compacted: true }, { unmeasured: true }]) {
       const out = p.render({ kind: 'estimate', tokens, limit: ASSUMED, ...flags });
-      const usage = /^Estimated usage: (<1%|~\d+%)/m.exec(out)[1];
+      const usage = p.formatPercent(p.usagePercent(tokens, 128000));
       const barLine = /^\[[█░]{20}\] (<1%|~\d+%) of planning limit/m.exec(out);
       assert.ok(barLine, out);
       assert.equal(barLine[1], usage);
@@ -110,10 +108,10 @@ test('bar percentage always equals the numeric usage line', () => {
   }
 });
 
-test('risk is stated in words on its own line at every usage (never by the bar alone)', () => {
+test('planning risk is stated in words on its own line at every usage (never by the bar alone)', () => {
   for (let tokens = 0; tokens <= 200000; tokens += 1000) {
     const out = p.render({ kind: 'estimate', tokens, limit: ASSUMED });
-    assert.match(out, /^Risk: (LOW|MEDIUM|HIGH|CRITICAL)$/m);
+    assert.match(out, /^Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)$/m);
   }
 });
 
@@ -146,6 +144,6 @@ test('partial and unmeasured bars are labeled and never claim a lower bound', ()
 test('host and transcript variants carry a bar with a scope label', () => {
   const host = p.render({ kind: 'host', tokens: 64000, limit: ASSUMED, hostLimit: 128000 });
   assert.match(host, /^\[█{10}░{10}\] ~50% of context limit \(host-reported\)$/m);
-  const tr = p.render({ kind: 'transcript', tokens: 64000, limit: ASSUMED });
-  assert.match(tr, /^\[█{10}░{10}\] ~50% of planning limit \(supplied text\)$/m);
+  const tr = p.render({ kind: 'transcript', tokens: 64000, limit: ASSUMED, tokenizer: 'o200k_base' });
+  assert.match(tr, /^\[█{10}░{10}\] ~50% of planning limit$/m);
 });

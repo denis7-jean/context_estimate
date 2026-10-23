@@ -86,10 +86,12 @@ test('instruction-like text inside content is only measured, never interpreted',
   assert.ok(a > 10 && Math.abs(a - b) < 1e-9);
 });
 
-test('empty conversation estimates near zero and renders <1k / <1% LOW', () => {
-  const est = h.estimateMessages([{ role: 'user', text: '/contextestimate' }]);
-  const out = p.render({ kind: 'estimate', tokens: est, limit: { value: 128000, label: 'assumed' } });
-  assert.match(out, /Estimated visible context: <1k tokens/);
-  assert.match(out, /Estimated usage: <1%/);
-  assert.match(out, /Risk: LOW/);
+test('empty conversation estimates near zero and renders <1k / <1% under a documented default', () => {
+  const est = h.estimateMessages([{ role: 'user', text: '/contextestimate model=gpt-6.1-sol' }]);
+  const limit = p.resolveLimit(p.parseInvocation('/contextestimate model=gpt-6.1-sol'), 'none');
+  const out = p.render({ kind: 'estimate', tokens: est, limit });
+  assert.match(out, /Estimated accessible text: <1k tokens/);
+  assert.match(out, /of planning limit/);
+  assert.match(out, /<1% of planning limit/);
+  assert.match(out, /Planning risk: LOW/);
 });

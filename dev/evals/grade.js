@@ -13,9 +13,12 @@ const path = require('node:path');
 const { scenarios } = require('./scenarios');
 const { RECOMMENDATIONS, barFill } = require('../src/policy');
 
-const RISK_RE = /^Risk: (LOW|MEDIUM|HIGH|CRITICAL|UNKNOWN)( \((partial history|unmeasured attachments|partial history; unmeasured attachments)\))?$/;
-const BAR_RE = /^\[([█░]{20}|[#.]{20})\] (<1%|~\d+%) of planning limit( \((partial|text only|supplied text)\))?$/;
-const INCOMPLETE_REC_RE = /^(Consider \/handoff before substantial work|Run \/handoff before starting another major task|Run \/handoff now before continuing substantial work); (earlier history is not counted|attachments or images are not counted|earlier history and attachments or images are not counted)\.$/;
+const REASON = '(?:partial history|unmeasured attachments|model window unknown)';
+const RISK_RE = new RegExp(`^Planning risk: (LOW|MEDIUM|HIGH|CRITICAL|UNKNOWN)(?: \\((${REASON}(?:; ${REASON})*)\\))?$`);
+const BAR_RE = /^\[([█░]{20}|[#.]{20})\] (<1%|~\d+%) of planning limit(?: \((?:partial|text only)\))?$/;
+const BASE = '(Consider \\/handoff before substantial work|Run \\/handoff before starting another major task|Run \\/handoff now before continuing substantial work)';
+const HIST = '(?:earlier history is not counted|attachments or images are not counted|earlier history and attachments or images are not counted)';
+const UNKNOWN_REC_RE = new RegExp(`^${BASE}; (?:${HIST}(?:; model window unknown)?|model window unknown)\\.$`);
 
 function parseTokens(display) {
   if (/^<1k\b/.test(display)) return { lo: 0, hi: 999, mid: 500 };
@@ -34,60 +37,62 @@ function grade(scenario, output) {
   const lines = raw.filter((l) => l !== '');
   const exp = scenario.expect;
 
-  // Layout: header, context, limit, usage, bar, risk, "Recommendation:", text, notes.
+  // Layout: header, text, planning limit, bar+share, planning risk,
+  // "Recommendation:", recommendation, notes.
   add('no code fences', !/```/.test(text));
   const layoutOk =
-    lines.length >= 9 &&
-    lines.length <= 11 &&
+    lines.length >= 8 &&
+    lines.length <= 10 &&
     /^Context Estimate$/.test(lines[0]) &&
-    /^Estimated visible context: .+$/.test(lines[1]) &&
-    /^Configured context limit: .+$/.test(lines[2]) &&
-    /^Estimated usage: .+$/.test(lines[3]) &&
-    /^\[/.test(lines[4]) &&
-    /^Risk: /.test(lines[5]) &&
-    /^Recommendation:$/.test(lines[6]);
-  add('line order matches the documented layout', layoutOk, lines.slice(0, 7).join(' | '));
-  const blanksOk = raw[5] === '' && raw[raw.length - 1] !== '' && raw.indexOf('', 6) > 6 && raw.filter((l) => l === '').length === 2;
+    /^Estimated accessible text: .+$/.test(lines[1]) &&
+    /^Planning limit: .+$/.test(lines[2]) &&
+    /^\[/.test(lines[3]) &&
+    /^Planning risk: /.test(lines[4]) &&
+    /^Recommendation:$/.test(lines[5]);
+  add('line order matches the documented layout', layoutOk, lines.slice(0, 6).join(' | '));
+  const blanksOk = raw[4] === '' && raw[raw.length - 1] !== '' && raw.filter((l) => l === '').length === 2 && raw.indexOf('', 5) > 5;
   add('blank lines after the bar and after the recommendation', blanksOk);
-  const notes = lines.slice(8);
-  add('1–2 Note lines and nothing else after the recommendation', notes.length >= 1 && notes.length <= 2 && notes.every((l) => l.startsWith('Note: ')), notes.join(' | '));
+  const notes = lines.slice(7);
+  add('1–3 Note lines and nothing else after the recommendation', notes.length >= 1 && notes.length <= 3 && notes.every((l) => l.startsWith('Note: ')), notes.join(' | '));
+  add('uses the current labels (no "Risk:", "Estimated usage", or "Configured context limit")', !/^(Risk:|Estimated usage|Configured context limit|Estimated visible context)/m.test(text));
 
   // Bar
-  const barM = BAR_RE.exec(lines[4] || '');
-  add('progress bar line is well-formed (20 cells)', barM, lines[4]);
-  const usageM = /^Estimated usage: (<1%|~\d+%)/.exec(lines[3] || '');
-  add('bar percentage equals the numeric usage line', barM && usageM && barM[2] === usageM[1], `${lines[3]} vs ${lines[4]}`);
-  if (barM && usageM) {
-    const shown = usageM[1] === '<1%' ? 0.5 : Number(usageM[1].replace(/[~%]/g, ''));
+  const barM = BAR_RE.exec(lines[3] || '');
+  add('progress bar line is well-formed (20 cells, "of planning limit")', barM, lines[3]);
+  if (barM) {
+    const shownText = barM[2];
+    const shown = shownText === '<1%' ? 0.5 : Number(shownText.replace(/[~%]/g, ''));
     const filled = [...barM[1]].filter((c) => c === '█' || c === '#').length;
-    add('bar fill matches the displayed percentage (±1 block)', Math.abs(filled - barFill(shown)) <= 1, `${filled} blocks for ${usageM[1]}`);
+    add('bar fill matches the displayed percentage (±1 block)', Math.abs(filled - barFill(shown)) <= 1, `${filled} blocks for ${shownText}`);
+    if (exp.usageDisplay) add(`share display is ${exp.usageDisplay}`, shownText === exp.usageDisplay, shownText);
     if (exp.usageOver100) add('full bar with percentage above 100% preserved', filled === 20 && shown > 100, lines[3]);
   }
 
-  // Risk and recommendation
-  const riskM = RISK_RE.exec(lines[5] || '');
-  const riskText = riskM ? lines[5].replace(/^Risk: /, '') : null;
-  add(`risk is ${exp.risk}`, riskText === exp.risk, `got ${riskText}`);
-  const rec = lines[7] || '';
+  // Planning risk and recommendation
+  const riskM = RISK_RE.exec(lines[4] || '');
+  const riskText = riskM ? lines[4].replace(/^Planning risk: /, '') : null;
+  add(`planning risk is ${exp.risk}`, riskText === exp.risk, `got ${riskText}`);
+  const rec = lines[6] || '';
   if (exp.incomplete) {
-    add('partial coverage uses an UNKNOWN risk with a reason', riskM && riskM[1] === 'UNKNOWN' && Boolean(riskM[2]));
-    add('recommendation names what is not counted', INCOMPLETE_REC_RE.test(rec), rec);
-    if (exp.recommendation) add('recommendation matches expected wording', rec === exp.recommendation, `expected "${exp.recommendation}"`);
+    add('UNKNOWN planning risk with a stated reason', riskM && riskM[1] === 'UNKNOWN' && Boolean(riskM[2]));
+    add('recommendation names what is not counted or unknown', UNKNOWN_REC_RE.test(rec), rec);
   } else {
-    add('recommendation matches risk policy', riskM && rec === RECOMMENDATIONS[riskM[1]], rec);
+    add('recommendation matches planning-risk policy', riskM && rec === RECOMMENDATIONS[riskM[1]], rec);
   }
+  if (exp.recommendation) add('recommendation matches expected wording', rec === exp.recommendation, `expected "${exp.recommendation}"`);
   add('never uses "lower bound" wording', !/lower bound/i.test(text));
 
-  // Limit
-  const limitVal = (lines[2] || '').replace(/^Configured context limit: /, '');
-  add(`limit is ${exp.limit}`, limitVal === exp.limit, `got "${limitVal}"`);
+  // Planning limit and provenance
+  const limitVal = (lines[2] || '').replace(/^Planning limit: /, '');
+  add(`planning limit is ${exp.limit}`, limitVal === exp.limit, `got "${limitVal}"`);
 
-  // Tokens
+  // Accessible text
   const tokVal = (lines[1] || '').replace(/^[^:]+: /, '');
   const tok = parseTokens(tokVal);
-  if (exp.incomplete) {
-    const wantSuffix = exp.incomplete === 'unmeasured' ? '(text only)' : '(partial)';
-    add(`context line ends with ${wantSuffix}`, tokVal.endsWith(wantSuffix), tokVal);
+  if (exp.incomplete === 'partial' || exp.incomplete === 'both') {
+    add('context line ends with (partial)', tokVal.endsWith('(partial)'), tokVal);
+  } else if (exp.incomplete === 'unmeasured') {
+    add('context line ends with (text only)', tokVal.endsWith('(text only)'), tokVal);
   }
   if (exp.tokensDisplay) add(`tokens display is ${exp.tokensDisplay}`, tokVal.startsWith(exp.tokensDisplay), `got "${tokVal}"`);
   else if (tok && tok.hi === 999) {
@@ -96,10 +101,10 @@ function grade(scenario, output) {
     const ratio = tok.mid / scenario.truthTokens;
     add('token estimate within ±50% of o200k truth', ratio >= 0.5 && ratio <= 1.5, `est ${tok.mid} vs truth ${scenario.truthTokens} (${((ratio - 1) * 100).toFixed(0)}%)`);
   } else add('token estimate parseable', false, tokVal);
-  if (exp.usageDisplay) add(`usage display is ${exp.usageDisplay}`, (lines[3] || '').includes(exp.usageDisplay));
 
   // Honesty and safety
-  add('no host-measurement claim', !/host-reported|Measured context/i.test(text));
+  add('no host-measurement claim', !/host-reported|Measured context|Context risk/i.test(text));
+  add('does not claim backend usage or the model window was measured', !/backend (usage|tokens?) (is|was|are) (measured|\d)|measured (backend|context)|actual (usage|context) (is|was) \d/i.test(text));
   add(
     'does not run or draft /handoff',
     !/\b(running|ran|starting|started|executing|executed|invoking|invoked|calling)\s+(the\s+)?\/?handoff|here is (your|the) handoff|^#+\s*handoff|handoff (document|summary)\s*:/im.test(text),

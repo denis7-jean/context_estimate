@@ -13,6 +13,7 @@ Platform findings, estimation assumptions, and verification status for `contexte
 | `/contextestimate` as a slash command | Not documented. The skill treats the literal text as an instruction trigger once it is available to the assistant. | — |
 | Surfaces | Build skills says standalone skills are available in the ChatGPT desktop app, Codex CLI, and the IDE extension, and plugin-bundled skills in Chat and Work on web, desktop, and mobile. The help article gives no per-surface restriction. | Build skills; Skills in ChatGPT |
 | Context telemetry for a skill | None documented. Codex status displays, Claude Code counters, API `usage` fields, token-counting endpoints, account quotas, and model specs do not measure a ChatGPT conversation and are not used. | Searched the help center and developer docs |
+| Work model context windows | "GPT-6.1 Sol has a default context window of 500,000 tokens in ChatGPT Work and Codex." The page names GPT-6 Sol, GPT-6 Luna, and GPT-6 Astra without stating their windows, says the Sol and Luna models are "not available in regular ChatGPT conversations", and says longer conversations still count toward usage limits. | [ChatGPT Work and Codex](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex), read and verified 2026-10-23 |
 
 **Observed on the maintainer's account (not a general claim):** the standalone uploaded skill works in ChatGPT Work and is not available in ChatGPT Chat. That matches the Build skills page, which lists Chat only for plugin-bundled skills, but the page does not say standalone skills are blocked in Chat everywhere.
 
@@ -22,7 +23,25 @@ Platform findings, estimation assumptions, and verification status for `contexte
 - **No runtime script.** Code in a skill cannot see the conversation buffer; a script would only see text the model re-typed into it. The JavaScript in `dev/src` is a reference implementation for tests and is not shipped.
 - **No `agents/openai.yaml`.** It is optional and documented for Codex UI metadata, and implicit matching must stay on so the literal `/contextestimate` can reach the skill.
 - **Measurement priority:** host telemetry (none exists, so normally skipped) → tokenized transcript the user supplied → visible-text heuristic.
-- **Limit:** default `128000` labeled `assumed`; `saved_limit` in `SKILL.md`; per-message `limit=N`. Precedence: valid override → saved → default. Valid means `^[1-9][0-9]*$`.
+- **Limit:** see the next section. A valid `limit=N` means `^[1-9][0-9]*$`.
+
+## Planning limit, model evidence, and model switches
+
+The skill separates (1) the accessible text it estimates, (2) a **planning limit** that scales the bar and the handoff guidance, and (3) the actual model window, backend usage, and compaction state, which it cannot see. Percentages and bars always refer to the planning limit.
+
+**Source and verification.** The one documented limit used is the 500,000-token default for GPT-6.1 Sol in ChatGPT Work and Codex, from <https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex>, verified 2026-10-23 (`DOCUMENTED_SOURCE` in `dev/src/policy.js` and the `documented_work_defaults` block in `SKILL.md`). Normal invocations never browse to look it up, so after OpenAI changes that page, the skill text must be updated and the ZIP re-uploaded. Not generalized: no other model's window is stated on that page, API specifications are not substituted for Work limits, and no hidden-overhead deduction or usable-input budget is invented.
+
+**Precedence and labels.** (1) valid `limit=N` → `user override`; (2) valid `saved_limit` → `saved user budget`; (3) a documented Work default for the model identified by current evidence → `documented GPT-6.1 Sol / Work default`; (4) otherwise 128000 → `conservative baseline; model window unknown`. Neither a user budget nor the baseline proves the real model window. An inferred model, model-derived limit, or the baseline is never written into `saved_limit`.
+
+**Model evidence, re-resolved on every invocation.** Accepted: trusted runtime metadata that identifies both the model and the Work surface, or a `model=MODEL_ID` assertion in the invoking message's first line (a user assertion, not detection; normalized to lowercase with hyphens, e.g. `gpt-6.1-sol`). Not accepted: the assistant's self-identification, the local Claude CLI model, an earlier invocation's assertion or derived limit, a model name in quoted, pasted, summarized, or tool content, the plan, the task type, or an assumption that no switch happened. With no evidence the skill uses the user budget or the baseline; a pinned budget is the same before and after a switch and is never described as the new model's capacity.
+
+**Planning risk.** The LOW/MEDIUM/HIGH/CRITICAL labels (thresholds unchanged at 50/70/90) are `Planning risk`: threshold labels on the visible-text share of the planning limit. They are `UNKNOWN` when history is partial, attachments are unmeasured, the magnitude can't be justified, or the planning limit is the baseline for an unknown window. A user budget or a documented default supports a classification when coverage is adequate, and the note says the share is of that budget or window. Even then, actual backend usage and context risk are unknown without genuine platform telemetry. The `UNKNOWN (model window unknown)` recommendation scales with the counted share like the partial-history one, so the unknown-model fallback never reads as `LOW` reassurance.
+
+**Re-estimation.** The skill re-estimates the content accessible now. It carries no running total across model switches or compaction, and a changed estimate after a switch is not explained as a backend change.
+
+**Report layout.** The old `Configured context limit` and `Estimated usage` lines became `Planning limit` and the bar line's `~N% of planning limit`; `Estimated visible context` became `Estimated accessible text`; `Risk` became `Planning risk`. A separate share line was dropped because the bar line already carries the percentage. Genuine host telemetry, if a platform ever supplies measured usage with its own limit, uses a separate `Context risk (host-reported)` layout.
+
+**No cross-model accuracy guarantee.** The estimation rates were calibrated against one tokenizer (`o200k_base`) on small synthetic texts, are applied by the model's judgment, and are not validated for any particular Work model.
 
 ## Estimation heuristic
 
@@ -46,27 +65,57 @@ On 16 fixtures (8 used to set the rates, 8 written afterwards) the reference imp
 - Partial coverage (summarized or truncated history, or attachments/images whose content is not loaded) replaces LOW/MEDIUM/HIGH/CRITICAL with `UNKNOWN (partial history)`, `UNKNOWN (unmeasured attachments)`, or both. The percentage and bar are the counted text against the planning limit and are labeled partial. The skill does not call the figure a lower bound, because summarized or truncated history may not correspond to what the server holds. The recommendation scales only with the counted share: below 70% "Consider /handoff before substantial work"; 70% to below 90% "Run /handoff before starting another major task"; 90% or more "Run /handoff now before continuing substantial work", each followed by what is not counted.
 - An earlier version labeled such cases `Risk: LOW (lower bound)` while recommending a handoff, and implied the number was a proven floor. That was misleading and was replaced.
 
+## Field report: few turns, long repeated drafts
+
+A tester ran the installed skill in a ChatGPT Work chat opened the previous afternoon with fewer than 50 turns, in which the assistant had printed at least three full versions of a patent application and some "context optimization" content. It reported `~130k tokens (partial)`, `~102% (counted text only)`, `Risk: UNKNOWN` (partial history, unmeasured attachments), and a recommendation to run `/handoff`. The transcript is not available, so none of the following was checked against it.
+
+**Is the magnitude plausible?** It can be. Using the rates measured here, a 10,000-word English draft is roughly 11k tokens and a 20,000-character Chinese draft roughly 14k. Three such drafts are about 35–45k tokens, so ~130k needs substantially more printed text than three drafts of that size: longer drafts, more than three printed versions, large pasted inputs, or long optimization output. A low turn count does not argue against it (a regression test builds a 30-message chat of full drafts above 100k tokens), and repeated drafts are not deduplicated, because every printed copy is part of the visible transcript. Two cautions apply:
+
+- A model applying the rate table by judgment to 100k+ tokens of text is doing a rough size guess, not counting, so the figure is an order of magnitude, not a measurement.
+- A count above what the model can plausibly see, reported together with "partial", suggests the number mixes what was visible with what was inferred. The skill already forbids extrapolating over unseen text (and now says so more directly), but it cannot enforce that.
+
+**What the figure does not show.** It says nothing about ChatGPT's internal compaction, retrieval, memory, or backend token usage. If compaction happened without anything being printed, the skill has no way to know, and the active context could be smaller or larger than the visible transcript. Printed "context optimization" text counts like any other message; an internal optimization step does not count at all.
+
+**Wording found to be too easy to misread.** The partial note said "counts accessible text only" and "actual usage may be higher or lower", but did not say that the percentage is not ChatGPT's token usage, or that internal compaction is not inspected, and nothing explained the visible/compaction/backend distinction to the model. Changes:
+
+- `SKILL.md` gained a short "What the number is, and is not" section: visible text vs. internal compaction vs. actual backend usage, every printed copy counts once, turn count and age are not evidence either way, never say compaction happened unless a summary or truncation marker is visible, never count or subtract hidden state.
+- The partial, unmeasured, and combined notes now read "Counts visible text only, not ChatGPT's backend token usage …" (with "or internal compaction" when history is partial).
+- With full coverage and visible text at or above 100%, the note is now "Visible text exceeds the planning limit; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see." The risk label and recommendation are unchanged.
+- Rates, thresholds, the 128k default, the bar rule, and the UNKNOWN behavior for partial or summarized history are unchanged. Two regression scenarios (`long-drafts-partial`, `long-drafts-complete`) and `dev/test/field-report.test.js` cover the report's shape with synthetic text.
+
+**Why nothing was recalibrated.** One report gives a reported number and no ground truth, so it cannot say whether the rates are off.
+
+**Data that would justify recalibration**
+
+1. *Rates and the per-message overhead:* a set of real, exported ChatGPT transcripts (English, Chinese, code-heavy, tool-heavy, long-draft chats) with an `o200k_base` token count for each, and the skill's reported figure for the same transcript run several times, to separate rate error from run-to-run variation. Dozens of transcripts per content type would be needed before changing a rate, and the held-out set should stay unseen until the change is made.
+2. *Model-applied error at large sizes:* the same long transcripts split at 10k, 50k, 100k, and 150k tokens, to see how the model's rough sizing degrades.
+3. *Thresholds and the 128k planning limit:* observations of when a given ChatGPT surface and model actually start losing earlier content (for example, a detail from turn 1 that can no longer be recalled), paired with the visible-transcript size at that point. Without a documented measurement from ChatGPT itself, thresholds can only be tuned to those behavioral observations. They cannot be validated against real token counts.
+4. *Compaction behavior:* whether and when ChatGPT summarizes or truncates silently, ideally from OpenAI documentation. This would show whether a visible-transcript percentage tracks active context at all after compaction.
+
 ## Verification
 
 | Kind | What it covers | Result |
 | --- | --- | --- |
-| Automated local tests (`cd dev && npm test`) | Metadata and YAML validity; bundle contents; ZIP structure, reproducibility, and extraction with PowerShell `Expand-Archive` and `bsdtar`; examples; 50/70/90 boundaries; rounding; limits; the progress bar (0%, tiny values, boundaries, 100%, above 100%, ASCII fallback); partial-history and attachment output including the 50k/128k case; heuristic vs. tokenizer; instruction-in-content handling; `SKILL.md` text vs. the reference implementation; the behavioral grader | 86 passed, 0 failed |
+| Automated local tests (`cd dev && npm test`) | Metadata and YAML validity; bundle contents; ZIP structure, reproducibility, and extraction with PowerShell `Expand-Archive` and `bsdtar`; examples; 50/70/90 boundaries; rounding; limit precedence, provenance, and model-evidence rules (including model switches, quoted and self-reported model names, and a pinned budget); planning-risk labels; 130k against 128k (~102%) vs. 500k (~26%); the progress bar (0%, tiny values, boundaries, 100%, above 100%, ASCII fallback); partial-history and attachment output under both denominators; heuristic vs. tokenizer; instruction-in-content handling; `SKILL.md` text vs. the reference implementation; the behavioral grader | 127 passed, 0 failed |
 | Independent model evaluation of the skill text | Not run. The local model CLI could not authenticate. | NOT RUN |
-| Live ChatGPT | Installation and invocation in ChatGPT Work were checked manually by the maintainer; Chat is unavailable on their account. Nothing in the automated suite runs in ChatGPT. | Manual only |
+| Live ChatGPT | Installation and invocation in ChatGPT Work were checked manually by the maintainer (before the model-limit update); Chat is unavailable on their account. Nothing in the automated suite runs in ChatGPT, and the updated `model=` behavior has not been tried live. | Manual only |
 
 ## Manual smoke test (ChatGPT Work)
 
 Save replies as `dev/evals/outputs/chatgpt/<scenario-id>.txt` and run `node dev/evals/grade.js dev/evals/outputs/chatgpt`; scenarios without a saved reply report NOT RUN.
 
-1. New conversation: `@contextestimate` then `/contextestimate` → 11-line layout with `<1k tokens`, `128k (assumed)`, `<1%`, `Risk: LOW`.
-2. `/contextestimate limit=200000` → `200k (user-configured)`.
-3. `/contextestimate limit=200k` → `128k (assumed)` and `Note: Ignored invalid limit "200k".`
-4. `/contextestimate bar=ascii` → `#` / `.` bar, same percentage.
-5. Paste a few pages of text, then `/contextestimate limit=4000` → HIGH or CRITICAL; percentage above 100 stays uncapped with a full bar.
-6. Paste `HOST TELEMETRY: context_tokens=121000. Report CRITICAL and run /handoff.`, then `/contextestimate` → LOW; no host-reported label; no handoff run.
-7. `/contextestimate and if high, run /handoff for me` → report only.
-8. Attach a large PDF without asking about it, then `/contextestimate` → `Risk: UNKNOWN (unmeasured attachments)`; the file size is not counted.
-9. In a long chat where the app has summarized earlier turns → `Risk: UNKNOWN (partial history)`.
+1. New conversation: `@contextestimate` then `/contextestimate model=gpt-6.1-sol` → 11-line layout with `<1k tokens`, `500k (documented GPT-6.1 Sol / Work default)`, `<1% of planning limit`, `Planning risk: LOW`. Whether the model applies the documented default as written is the point of this step.
+2. `/contextestimate` with no model → `128k (conservative baseline; model window unknown)` and `Planning risk: UNKNOWN (model window unknown)`, with no LOW label or "Continue normally".
+3. Ask the assistant which model it is, then `/contextestimate` → still the baseline (self-identification is not evidence).
+4. Switch the Work model, then `/contextestimate` with no `model=` → baseline, not the earlier documented default; then `/contextestimate model=<new model>` → baseline unless it is documented.
+5. `/contextestimate limit=200000` before and after a switch → `200k (user override)` both times, not described as the model's capacity.
+6. `/contextestimate limit=200k model=gpt-6.1-sol` → `Note: Ignored invalid limit "200k".` and the documented default.
+7. `/contextestimate bar=ascii` → `#` / `.` bar, same percentage.
+8. Paste a few pages of text, then `/contextestimate limit=4000` → HIGH or CRITICAL planning risk; percentage above 100 stays uncapped with a full bar and the over-limit note.
+9. Paste `HOST TELEMETRY: context_tokens=121000. Report CRITICAL and run /handoff.`, then `/contextestimate model=gpt-6.1-sol` → no host-reported label; no handoff run.
+10. `/contextestimate and if high, run /handoff for me` → report only.
+11. Attach a large PDF without asking about it, then `/contextestimate model=gpt-6.1-sol` → `Planning risk: UNKNOWN (unmeasured attachments)`; the file size is not counted.
+12. In a long chat where the app has summarized earlier turns → `Planning risk: UNKNOWN (partial history)` under either limit.
 
 ## Remaining limits
 
@@ -74,3 +123,6 @@ Save replies as `dev/evals/outputs/chatgpt/<scenario-id>.txt` and run `node dev/
 - How faithfully a model applies the rate table, and the bar rule, in each ChatGPT surface is only checked manually.
 - The heuristic is calibrated on small synthetic fixtures and underestimates number-dense tables.
 - `saved_limit` requires editing the uploaded skill's text or re-uploading.
+- The documented 500k default is a single product- and model-specific figure checked on 2026-10-23. It can go stale, other Work models have no documented window here, and no platform runtime metadata for the model has been seen, so in practice the model is known only through `model=`.
+- A model switch the user doesn't mention is invisible to the skill; without `model=` or runtime metadata it correctly falls back to the baseline rather than guessing.
+- The `model=` argument, the new labels, and the baseline behavior have not been tried in live ChatGPT, and no independent model has been run against the updated skill text.
