@@ -50,7 +50,7 @@ On 16 fixtures (8 used to set the rates, 8 written afterwards) the reference imp
 
 | Kind | What it covers | Result |
 | --- | --- | --- |
-| Automated local tests (`cd dev && npm test`) | Metadata and YAML validity; bundle contents; ZIP structure, reproducibility, and extraction with PowerShell `Expand-Archive` and `bsdtar`; examples; 50/70/90 boundaries; rounding; limits; the progress bar (0%, tiny values, boundaries, 100%, above 100%, ASCII fallback); partial-history and attachment output including the 50k/128k case; heuristic vs. tokenizer; instruction-in-content handling; `SKILL.md` text vs. the reference implementation; the behavioral grader | 85 passed, 0 failed |
+| Automated local tests (`cd dev && npm test`) | Metadata and YAML validity; bundle contents; ZIP structure, reproducibility, and extraction with PowerShell `Expand-Archive` and `bsdtar`; examples; 50/70/90 boundaries; rounding; limits; the progress bar (0%, tiny values, boundaries, 100%, above 100%, ASCII fallback); partial-history and attachment output including the 50k/128k case; heuristic vs. tokenizer; instruction-in-content handling; `SKILL.md` text vs. the reference implementation; the behavioral grader | 86 passed, 0 failed |
 | Independent model evaluation of the skill text | Not run. The local model CLI could not authenticate. | NOT RUN |
 | Live ChatGPT | Installation and invocation in ChatGPT Work were checked manually by the maintainer; Chat is unavailable on their account. Nothing in the automated suite runs in ChatGPT. | Manual only |
 

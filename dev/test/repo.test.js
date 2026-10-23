@@ -98,7 +98,7 @@ test('published files contain no credentials or private identifiers', () => {
 
 test('publishable tree has only the expected top-level entries and no large artifacts', () => {
   const top = fs.readdirSync(ROOT).filter((n) => n !== '.git' && n !== 'node_modules').sort();
-  assert.deepEqual(top, ['.gitignore', 'LICENSE', 'README.md', 'dev', 'dist', 'docs', 'skill']);
+  assert.deepEqual(top, ['.gitattributes', '.gitignore', 'LICENSE', 'README.md', 'dev', 'dist', 'docs', 'skill']);
   for (const file of publishable()) assert.ok(fs.statSync(file).size < 200 * 1024, `${path.relative(ROOT, file)} is large`);
   assert.deepEqual(fs.readdirSync(path.join(ROOT, 'dist')), ['contextestimate.zip']);
 });

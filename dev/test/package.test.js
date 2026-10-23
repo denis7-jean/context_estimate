@@ -107,3 +107,15 @@ test('zip extracts cleanly with an independent extractor (bsdtar)', () => {
   execFileSync(TAR, ['-xf', ZIP_PATH, '-C', out]);
   checkExtracted(out);
 });
+
+test('frontmatter parsing and validation work on CRLF checkouts (Windows autocrlf)', () => {
+  const { parseFrontmatter } = require('../src/bundle');
+  const crlf = skillText.replace(/\r?\n/g, '\r\n');
+  const { fm } = parseFrontmatter(crlf);
+  assert.equal(fm.name, 'contextestimate');
+  assert.equal(fm.description.includes('\r'), false);
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ce-crlf-')), 'contextestimate');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), crlf);
+  assert.deepEqual(validateSkill(dir).errors, []);
+});

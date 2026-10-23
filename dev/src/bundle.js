@@ -27,8 +27,9 @@ function listFiles(dir, base = dir) {
 // Parses the YAML frontmatter used by this skill: top-level `key: value`
 // scalars only. Anything more complex is reported as an error rather than
 // guessed at.
-function parseFrontmatter(text) {
-  if (!text.startsWith('---\n') && !text.startsWith('---\r\n')) throw new Error('SKILL.md must start with --- frontmatter');
+function parseFrontmatter(rawText) {
+  const text = rawText.replace(/\r\n/g, '\n');
+  if (!text.startsWith('---\n')) throw new Error('SKILL.md must start with --- frontmatter');
   const end = text.indexOf('\n---', 4);
   if (end < 0) throw new Error('Unterminated frontmatter');
   const fm = {};
