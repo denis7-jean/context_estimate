@@ -1,0 +1,17 @@
+{
+  "name": "contextestimate-dev",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Development tests and packaging for the contextestimate ChatGPT skill. Not part of the upload bundle.",
+  "type": "commonjs",
+  "scripts": {
+    "package": "node src/bundle.js",
+    "test": "node src/bundle.js && node --test \"test/*.test.js\"",
+    "calibrate": "node src/calibrate.js",
+    "grade": "node evals/grade.js"
+  },
+  "devDependencies": {
+    "gpt-tokenizer": "^2.9.0",
+    "yaml": "^2.8.3"
+  }
+}
