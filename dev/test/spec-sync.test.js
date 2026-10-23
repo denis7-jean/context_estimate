@@ -113,7 +113,7 @@ test('UNKNOWN planning-risk conditions are all listed', () => {
 test('baseline variant is documented with the reference labels', () => {
   assert.ok(skill.includes(`Planning limit: ${p.formatLimit(BASELINE.value)} (${p.LIMIT_LABELS.baseline})`));
   assert.ok(skill.includes('Planning risk: UNKNOWN (model window unknown)'));
-  assert.match(skill, /Do not show LOW, and do not give a reassuring recommendation/);
+  assert.match(skill, /Do not show LOW or any other threshold label/);
 });
 
 test('safety and honesty constraints are stated', () => {
@@ -188,4 +188,13 @@ test("SKILL.md says it does not read ChatGPT's hidden context meter and separate
 
 test('old labels are gone from SKILL.md', () => {
   assert.doesNotMatch(skill, /Configured context limit|Estimated usage|Estimated visible context|^Risk: |default_limit/m);
+});
+
+test('SKILL.md states the neutral baseline recommendation and that an unknown window alone never recommends a handoff', () => {
+  assert.ok(skill.includes(p.NEUTRAL_RECOMMENDATION));
+  assert.match(skill, /An unknown model window is not, by itself, a reason to recommend `\/handoff`/);
+  assert.match(skill, /Do not recommend `\/handoff`, say a handoff is prudent, or imply the chat is near a limit solely because the model window is unknown/);
+  assert.match(skill, /not used for the baseline/);
+  assert.match(skill, /with the baseline the base is always `Consider \/handoff before substantial work` \(a share of an unknown window does not escalate it\)/);
+  assert.match(skill, /If the estimate changes after a model switch, it may reflect estimation variability or different accessible material/);
 });

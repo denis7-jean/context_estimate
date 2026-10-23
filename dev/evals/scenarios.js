@@ -9,6 +9,7 @@ const { encode } = require('gpt-tokenizer/encoding/o200k_base');
 const t = require('../fixtures/texts');
 const h = require('../fixtures/heldout');
 const { draft, contextOptimization } = require('../fixtures/patent');
+const greeting = require('../fixtures/greeting');
 
 const u = (text) => ({ role: 'user', text });
 const a = (text) => ({ role: 'assistant', text });
@@ -16,6 +17,7 @@ const tool = (text) => ({ role: 'tool', text });
 
 const BASELINE = '128k (conservative baseline; model window unknown)';
 const SOL = '500k (documented GPT-6.1 Sol / Work default)';
+const NEUTRAL = 'A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.';
 
 const englishTurns = [
   u(h.englishChat.split('\n\n')[0]),
@@ -48,8 +50,34 @@ const raw = [
       incomplete: 'baseline',
       limit: BASELINE,
       tokensDisplay: '<1k',
-      recommendation: 'Consider /handoff before substantial work; model window unknown.',
+      recommendation: NEUTRAL,
       mustNot: [/Planning risk: LOW/, /Continue normally/],
+    },
+  },
+  {
+    id: 'greeting-sol',
+    what: 'Real smoke-test shape: four-message greeting exchange, /contextestimate on GPT-6.1 Sol (user asserts the model). Stays under 1k against the documented default',
+    messages: greeting.transcriptForFirstRun(),
+    expect: {
+      risk: 'LOW',
+      limit: SOL,
+      tokensDisplay: '<1k',
+      usageDisplay: '<1%',
+      mustNot: [/~\d+k tokens/],
+    },
+  },
+  {
+    id: 'greeting-luna',
+    what: 'Same exchange plus the first report, /contextestimate again after switching to GPT-6 Luna: same accessible text, still under 1k, baseline labeled, no handoff advice because the window is unknown',
+    messages: greeting.transcriptForSecondRun(),
+    expect: {
+      risk: 'UNKNOWN (model window unknown)',
+      incomplete: 'baseline',
+      limit: BASELINE,
+      tokensDisplay: '<1k',
+      usageDisplay: '<1%',
+      recommendation: NEUTRAL,
+      mustNot: [/~\d+k tokens/, /documented|500k/],
     },
   },
   {
@@ -111,7 +139,7 @@ const raw = [
       incomplete: 'partial',
       baseline: true,
       limit: BASELINE,
-      recommendation: 'Consider /handoff before substantial work; earlier history is not counted; model window unknown.',
+      recommendation: 'Consider /handoff before substantial work; earlier history is not counted.',
     },
   },
   {
@@ -219,7 +247,7 @@ const raw = [
       incomplete: 'baseline',
       limit: BASELINE,
       tokensDisplay: '<1k',
-      recommendation: 'Consider /handoff before substantial work; model window unknown.',
+      recommendation: NEUTRAL,
       mustNot: [/documented|500k|GPT-6\.1 Sol/],
     },
   },
@@ -236,7 +264,7 @@ const raw = [
       incomplete: 'baseline',
       limit: BASELINE,
       tokensDisplay: '<1k',
-      recommendation: 'Consider /handoff before substantial work; model window unknown.',
+      recommendation: NEUTRAL,
       mustNot: [/documented|500k/],
     },
   },

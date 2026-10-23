@@ -171,19 +171,36 @@ test('partial coverage stays UNKNOWN under either denominator and under a user b
   assert.match(att, /^Planning risk: UNKNOWN \(unmeasured attachments\)$/m);
 });
 
-test('unknown-model fallback never produces a LOW label or a reassuring recommendation', () => {
+test('unknown-model fallback: UNKNOWN, no threshold label, no reassurance, and no handoff advice from the unknown window alone', () => {
+  const NEUTRAL = 'A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.';
+  assert.equal(p.NEUTRAL_RECOMMENDATION, NEUTRAL);
   for (let tokens = 0; tokens <= 400000; tokens += 2500) {
-    for (const flags of [{}, { compacted: true }, { unmeasured: true }]) {
-      const out = renderFor(tokens, BASELINE, flags);
-      assert.match(out, /^Planning risk: UNKNOWN \(.*model window unknown\)$/m, `${tokens}`);
-      assert.doesNotMatch(out, /Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)|Continue normally|Continue, but/);
-      assert.match(out, /\/handoff/);
-    }
+    const out = renderFor(tokens, BASELINE);
+    assert.match(out, /^Planning risk: UNKNOWN \(model window unknown\)$/m, `${tokens}`);
+    assert.match(out, new RegExp(`^Recommendation:\\n${NEUTRAL.replace(/[.?]/g, '\\$&')}$`, 'm'), `${tokens}`);
+    assert.doesNotMatch(out, /Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)|Continue normally|Continue, but/);
+    assert.doesNotMatch(out, /\/handoff|prudent|near (a|the) limit/i, `${tokens}: no handoff advice from an unknown window alone`);
+    assert.match(out, /^Note: Visible-text estimate against a conservative baseline; the model window and backend usage are unknown\.$/m, `${tokens}: never the over-limit note`);
   }
   const fresh = renderFor(6, BASELINE);
-  assert.match(fresh, /^Planning risk: UNKNOWN \(model window unknown\)$/m);
-  assert.match(fresh, /^Consider \/handoff before substantial work; model window unknown\.$/m);
-  assert.match(fresh, /Planning limit: 128k \(conservative baseline; model window unknown\)/);
+  assert.match(fresh, /^Planning limit: 128k \(conservative baseline; model window unknown\)$/m);
+  assert.match(fresh, /^\[█░{19}\] <1% of planning limit$/m);
+  // The bar and percentage against the baseline stay, even above 100%.
+  assert.match(renderFor(130000, BASELINE), /^\[█{20}\] ~102% of planning limit$/m);
+});
+
+test('handoff advice under the baseline comes only from an explicit reason, and never escalates on the baseline share', () => {
+  for (const tokens of [6, 64000, 120000, 400000]) {
+    const hist = renderFor(tokens, BASELINE, { compacted: true });
+    assert.match(hist, /^Consider \/handoff before substantial work; earlier history is not counted\.$/m, `${tokens}`);
+    assert.doesNotMatch(hist, /Run \/handoff|model window unknown\./);
+    const att = renderFor(tokens, BASELINE, { unmeasured: true });
+    assert.match(att, /^Consider \/handoff before substantial work; attachments or images are not counted\.$/m, `${tokens}`);
+    const both = renderFor(tokens, BASELINE, { compacted: true, unmeasured: true });
+    assert.match(both, /^Planning risk: UNKNOWN \(partial history; unmeasured attachments; model window unknown\)$/m);
+  }
+  // With a known planning limit the same shares still escalate by threshold.
+  assert.match(renderFor(120000, budget(128000), { compacted: true }), /^Run \/handoff now before continuing substantial work; earlier history is not counted\.$/m);
 });
 
 test('a user budget or documented default supports LOW to CRITICAL classification when coverage is adequate', () => {

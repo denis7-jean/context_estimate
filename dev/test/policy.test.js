@@ -168,7 +168,7 @@ test('unmeasured attachments: partial coverage, UNKNOWN planning risk, no lower-
   assert.doesNotMatch(out, /lower bound|Planning risk: LOW|Continue normally/i);
 });
 
-test('50k partial history under the baseline: UNKNOWN for both reasons, never LOW', () => {
+test('50k partial history under the baseline: UNKNOWN for both reasons, never LOW, no share-based escalation', () => {
   const out = renderFor(50000, BASELINE, { compacted: true });
   assert.equal(
     out,
@@ -180,7 +180,7 @@ test('50k partial history under the baseline: UNKNOWN for both reasons, never LO
       '',
       'Planning risk: UNKNOWN (partial history; model window unknown)',
       'Recommendation:',
-      'Consider /handoff before substantial work; earlier history is not counted; model window unknown.',
+      'Consider /handoff before substantial work; earlier history is not counted.',
       '',
       "Note: Counts visible text only, not ChatGPT's backend token usage or internal compaction; earlier history is summarized or truncated, so actual usage may be higher or lower.",
     ].join('\n'),

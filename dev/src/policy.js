@@ -48,8 +48,11 @@ const INCOMPLETE_SUFFIX = {
   partial: 'earlier history is not counted',
   unmeasured: 'attachments or images are not counted',
   both: 'earlier history and attachments or images are not counted',
-  baseline: 'model window unknown',
 };
+// An unknown model window is not, by itself, a reason to hand off. With the
+// baseline as the only planning limit, the report says so neutrally.
+const NEUTRAL_RECOMMENDATION =
+  'A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.';
 const INCOMPLETE_BASE = {
   LOW: 'Consider /handoff before substantial work',
   MEDIUM: 'Consider /handoff before substantial work',
@@ -217,11 +220,16 @@ function bar(usage, style = 'unicode') {
   return `[${s.fill.repeat(n)}${s.empty.repeat(BAR_WIDTH - n)}]`;
 }
 
+// Recommendation when planning risk is UNKNOWN.
+// - Only the baseline (no missing history or attachments): neutral, no handoff advice.
+// - Missing history or unmeasured attachments are explicit reasons to consider a
+//   handoff. The base escalates with the counted share only for a known planning
+//   limit (override, saved, documented); against the baseline the share is not a
+//   reliable threshold comparison, so the base stays at "consider".
 function incompleteRecommendation(usage, { compacted, unmeasured, source }, t = DEFAULT_THRESHOLDS) {
-  const parts = [];
-  if (compacted || unmeasured) parts.push(INCOMPLETE_SUFFIX[compacted ? (unmeasured ? 'both' : 'partial') : 'unmeasured']);
-  if (source === 'baseline') parts.push(INCOMPLETE_SUFFIX.baseline);
-  return `${INCOMPLETE_BASE[classify(usage, t)]}; ${parts.join('; ')}.`;
+  if (!compacted && !unmeasured) return NEUTRAL_RECOMMENDATION;
+  const base = source === 'baseline' ? INCOMPLETE_BASE.LOW : INCOMPLETE_BASE[classify(usage, t)];
+  return `${base}; ${INCOMPLETE_SUFFIX[compacted ? (unmeasured ? 'both' : 'partial') : 'unmeasured']}.`;
 }
 
 // state: {
@@ -280,8 +288,11 @@ function render(state) {
 
   if (incomplete) return finish(NOTES[incomplete]);
   if (state.kind === 'transcript') return finish(transcriptNote(state.tokenizer));
+  // Against the baseline the share is only a labeled comparison, so it never
+  // gets the over-limit note.
+  if (state.limit.source === 'baseline') return finish(NOTES.baseline);
   if (usage >= 100) return finish(NOTES.over);
-  return finish(state.limit.source === 'documented' ? NOTES.documented : state.limit.source === 'baseline' ? NOTES.baseline : NOTES.budget);
+  return finish(state.limit.source === 'documented' ? NOTES.documented : NOTES.budget);
 }
 
 module.exports = {
@@ -295,6 +306,7 @@ module.exports = {
   RECOMMENDATIONS,
   INCOMPLETE_BASE,
   INCOMPLETE_SUFFIX,
+  NEUTRAL_RECOMMENDATION,
   NOTES,
   transcriptNote,
   isValidLimit,

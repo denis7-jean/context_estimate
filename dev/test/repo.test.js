@@ -137,3 +137,23 @@ test('publishable tree has only the expected top-level entries and no large arti
   for (const file of publishable()) assert.ok(fs.statSync(file).size < 200 * 1024, `${path.relative(ROOT, file)} is large`);
   assert.deepEqual(fs.readdirSync(path.join(ROOT, 'dist')), ['contextestimate.zip']);
 });
+
+test('README and notes document the greeting smoke test, the neutral baseline recommendation, and switch variability', () => {
+  const r = read('README.md');
+  const d = read('docs/development-notes.md');
+  for (const doc of [r, d]) {
+    assert.match(doc, /GPT-6 Luna Medium/);
+    assert.match(doc, /GPT-6\.1 Sol Medium/);
+    assert.match(doc, /Hello, world! 👋/);
+    assert.match(doc, /A model-relative handoff assessment is unavailable\. Provide model=MODEL_ID or limit=N for a planning comparison\./);
+    assert.match(doc, /estimation variability or differences in the accessible history/);
+    assert.match(doc, /not measurements of backend context usage/);
+  }
+  assert.match(r, /An unknown window never triggers a handoff recommendation by itself/);
+  assert.match(d, /sizing sanity|synthetic fixture/);
+  assert.match(d, /Neither live number is ground truth/);
+  assert.match(d, /do not show that a language model produces a deterministic exact count in a live invocation/i);
+  const blocks = [...r.matchAll(/```\n(Context Estimate\n[\s\S]*?)\n```/g)].map((m) => m[1]);
+  assert.ok(blocks[1].includes(p.NEUTRAL_RECOMMENDATION));
+  assert.doesNotMatch(blocks[1], /\/handoff/);
+});

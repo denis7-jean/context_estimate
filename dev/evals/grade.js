@@ -11,14 +11,14 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { scenarios } = require('./scenarios');
-const { RECOMMENDATIONS, barFill } = require('../src/policy');
+const { RECOMMENDATIONS, NEUTRAL_RECOMMENDATION, barFill } = require('../src/policy');
 
 const REASON = '(?:partial history|unmeasured attachments|model window unknown)';
 const RISK_RE = new RegExp(`^Planning risk: (LOW|MEDIUM|HIGH|CRITICAL|UNKNOWN)(?: \\((${REASON}(?:; ${REASON})*)\\))?$`);
 const BAR_RE = /^\[([█░]{20}|[#.]{20})\] (<1%|~\d+%) of planning limit(?: \((?:partial|text only)\))?$/;
 const BASE = '(Consider \\/handoff before substantial work|Run \\/handoff before starting another major task|Run \\/handoff now before continuing substantial work)';
 const HIST = '(?:earlier history is not counted|attachments or images are not counted|earlier history and attachments or images are not counted)';
-const UNKNOWN_REC_RE = new RegExp(`^${BASE}; (?:${HIST}(?:; model window unknown)?|model window unknown)\\.$`);
+const UNKNOWN_REC_RE = new RegExp(`^${BASE}; ${HIST}\\.$`);
 
 function parseTokens(display) {
   if (/^<1k\b/.test(display)) return { lo: 0, hi: 999, mid: 500 };
@@ -75,7 +75,11 @@ function grade(scenario, output) {
   const rec = lines[6] || '';
   if (exp.incomplete) {
     add('UNKNOWN planning risk with a stated reason', riskM && riskM[1] === 'UNKNOWN' && Boolean(riskM[2]));
-    add('recommendation names what is not counted or unknown', UNKNOWN_REC_RE.test(rec), rec);
+    if (exp.incomplete === 'baseline') {
+      add('unknown window alone gives the neutral recommendation, with no handoff advice', rec === NEUTRAL_RECOMMENDATION && !/\/handoff/i.test(text), rec);
+    } else {
+      add('recommendation names what is not counted', UNKNOWN_REC_RE.test(rec), rec);
+    }
   } else {
     add('recommendation matches planning-risk policy', riskM && rec === RECOMMENDATIONS[riskM[1]], rec);
   }

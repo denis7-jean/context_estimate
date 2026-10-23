@@ -21,7 +21,7 @@ Continue normally.
 Note: Visible-text estimate against the documented window; backend usage is unknown.
 ```
 
-With no model evidence and no budget, it falls back to a conservative baseline and says the model window is unknown. The same text now fills the whole bar, and the planning risk is `UNKNOWN` instead of a reassuring label:
+With no model evidence and no budget, it falls back to a conservative baseline and says the model window is unknown. The bar and percentage are still drawn against that baseline, but the planning risk is `UNKNOWN` and the recommendation is neutral: an unknown window is not, by itself, a reason to hand off.
 
 ```
 Context Estimate
@@ -31,9 +31,9 @@ Planning limit: 128k (conservative baseline; model window unknown)
 
 Planning risk: UNKNOWN (model window unknown)
 Recommendation:
-Run /handoff now before continuing substantial work; model window unknown.
+A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.
 
-Note: Visible text exceeds the planning limit; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see.
+Note: Visible-text estimate against a conservative baseline; the model window and backend usage are unknown.
 ```
 
 When earlier history is summarized or truncated, or attachments/images can't be counted, it shows what it counted, labels it partial, and reports `UNKNOWN` under any limit:
@@ -80,6 +80,17 @@ The planning limit is the first of these that applies, and its source is always 
 ```
 
 `limit=N` must be a positive integer with no separators or suffixes (`200k` is ignored with a note). Options are read from the first line of the message only and apply to that message only. To keep a budget, edit `saved_limit:` in the skill's `SKILL.md` and re-upload.
+
+An unknown window never triggers a handoff recommendation by itself. A recommendation comes from a known planning limit and its thresholds, or from a separate explicit reason such as missing history or unmeasured attachments (which keep their `UNKNOWN` labels and "consider a handoff" advice under any limit).
+
+### Observed smoke test (ChatGPT Work)
+
+In a new Work chat the user sent `hi` on GPT-6 Luna Medium, got "Hi! What would you like to work on?", sent `Hello World` on GPT-6.1 Sol Medium, got "Hello, world! 👋", and then ran `/contextestimate` on Sol (`<1k` tokens against the documented 500k) and again on Luna. The Luna run reported `~5k` tokens against the 128k baseline with `UNKNOWN` risk and a recommendation to consider a handoff because the model window is unknown. That showed two problems, both fixed here:
+
+- **An unknown window was turned into a handoff warning.** It now produces a neutral recommendation (see the second example above).
+- **The same tiny conversation was sized ~5x larger on one model.** The accessible text in that exchange is a few dozen tokens, so ~5k is not a plausible count of it. One unverified explanation is that non-countable material (the skill's own text (~3.9k tokens in the tested version), instructions, memory, tool definitions) was counted. The skill text now says outright that a few short messages are well under 1k, that a total in the thousands for such a chat means non-countable text is being counted, and that the total should not depend on the selected model. A synthetic regression fixture checks this sizing against the reference estimator and a tokenizer. It is a sizing sanity test, not proof that a language model returns an exact, repeatable count in a live invocation, and neither live number is treated as ground truth. No rates or thresholds were changed.
+
+Different estimates from different models, or after a switch, can reflect estimation variability or differences in the accessible history. They are not measurements of backend context usage, and the skill never explains a difference as one.
 
 ## Estimation limits
 
@@ -130,7 +141,7 @@ docs/development-notes.md        platform findings, assumptions, verification st
 ## Verification status
 
 - **Automated, local:** package structure and extraction, limit precedence and provenance, model-evidence rules, the progress bar, planning-risk labels, partial-history output, and instruction-text checks. These test the skill's text and a reference implementation, not ChatGPT, and they don't show that any model follows the instructions.
-- **Live ChatGPT:** installation and invocation in Work were checked manually by the maintainer, before the model-limit update. No automated test runs inside ChatGPT, no independent model has been run against the skill text, and the `model=` behavior has not been tried live.
+- **Live ChatGPT:** the maintainer manually ran installation, invocation, and the greeting smoke test above in Work. Those live runs found the two defects fixed in this version; the fix itself has not been re-tested live. No automated test runs inside ChatGPT, and no independent model has been run against the skill text.
 
 ## License
 
