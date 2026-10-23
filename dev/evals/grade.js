@@ -151,4 +151,15 @@ if (require.main === module) {
   process.exitCode = fail ? 1 : 0;
 }
 
-module.exports = { grade, gradeDir, parseTokens };
+// Flags a report that sizes a transcript known to be under 1k tokens at 1k or
+// more (for example ~1k, ~5k, or ~10k). Returns a description, or null if fine.
+function sizingProblem(report, truthTokens) {
+  const m = /^Estimated accessible text: (.+)$/m.exec(report);
+  if (!m) return 'no accessible-text line';
+  const tok = parseTokens(m[1].replace(/ \((?:partial|text only)\)$/, ''));
+  if (!tok) return `unparseable: ${m[1]}`;
+  if (truthTokens < 1000 && tok.hi !== 999) return `reported ${m[1]} for a transcript of about ${truthTokens} tokens`;
+  return null;
+}
+
+module.exports = { grade, gradeDir, parseTokens, sizingProblem };

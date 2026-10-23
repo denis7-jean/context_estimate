@@ -31,7 +31,7 @@ Planning limit: 128k (conservative baseline; model window unknown)
 
 Planning risk: UNKNOWN (model window unknown)
 Recommendation:
-A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.
+A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.
 
 Note: Visible-text estimate against a conservative baseline; the model window and backend usage are unknown.
 ```
@@ -73,17 +73,34 @@ The planning limit is the first of these that applies, and its source is always 
 - There is **no table of other models' windows**, and no accuracy guarantee across models: the estimate is applied by the model's judgment and checked only against one tokenizer on small synthetic texts.
 
 ```
-/contextestimate model=gpt-6.1-sol
-/contextestimate limit=200000
-/contextestimate limit=200000 model=gpt-6.1-sol    (the budget wins; the label stays "user override")
-/contextestimate bar=ascii
+@contextestimate model=gpt-6.1-sol
+@contextestimate limit=200000
+@contextestimate limit=200000 model=gpt-6.1-sol    (the budget wins; the label stays "user override")
+@contextestimate bar=ascii
 ```
 
 `limit=N` must be a positive integer with no separators or suffixes (`200k` is ignored with a note). Options are read from the first line of the message only and apply to that message only. To keep a budget, edit `saved_limit:` in the skill's `SKILL.md` and re-upload.
 
 An unknown window never triggers a handoff recommendation by itself. A recommendation comes from a known planning limit and its thresholds, or from a separate explicit reason such as missing history or unmeasured attachments (which keep their `UNKNOWN` labels and "consider a handoff" advice under any limit).
 
-### Observed smoke test (ChatGPT Work)
+### Getting a parameterized estimate
+
+When a report says a model-relative assessment is unavailable, the next step is explicit: **invoke or select the skill again and put the parameter in that same message.** In ChatGPT Work, type `@` to select a skill (OpenAI documents `@` for selecting a skill, for example `@skill-creator` in Work), then add the option on the same line:
+
+```
+@contextestimate limit=250000
+@contextestimate model=gpt-6-luna
+@contextestimate model=gpt-6.1-sol
+/contextestimate limit=250000
+```
+
+- Sending a separate follow-up message that contains only `model=...` or `limit=...` does not necessarily invoke the skill, and it never updates the previous report. A bare message like that is not an invocation.
+- On the new invocation the parameter applies to that run only, and the estimate is recalculated from the visible conversation that is accessible now (it doesn't patch the earlier report's numbers). The next plain invocation falls back to the baseline again unless a saved budget applies.
+- `model=MODEL_ID` is a user-provided assertion, not automatic model detection. It changes the limit only when OpenAI documents a Work window for that model; today that is just `gpt-6.1-sol`, so `model=gpt-6-luna` is accepted but leaves the baseline and `UNKNOWN (model window unknown)`.
+- `limit=N` is a user-provided planning budget. It works for any model and is labeled `user override`, not the model's capacity.
+- `/contextestimate` is instruction text the skill recognizes. It has not been verified as a registered ChatGPT slash command, so the `@` form above is the one to use.
+
+### Observed smoke tests (ChatGPT Work)
 
 In a new Work chat the user sent `hi` on GPT-6 Luna Medium, got "Hi! What would you like to work on?", sent `Hello World` on GPT-6.1 Sol Medium, got "Hello, world! 👋", and then ran `/contextestimate` on Sol (`<1k` tokens against the documented 500k) and again on Luna. The Luna run reported `~5k` tokens against the 128k baseline with `UNKNOWN` risk and a recommendation to consider a handoff because the model window is unknown. That showed two problems, both fixed here:
 
@@ -91,6 +108,17 @@ In a new Work chat the user sent `hi` on GPT-6 Luna Medium, got "Hi! What would 
 - **The same tiny conversation was sized ~5x larger on one model.** The accessible text in that exchange is a few dozen tokens, so ~5k is not a plausible count of it. One unverified explanation is that non-countable material (the skill's own text (~3.9k tokens in the tested version), instructions, memory, tool definitions) was counted. The skill text now says outright that a few short messages are well under 1k, that a total in the thousands for such a chat means non-countable text is being counted, and that the total should not depend on the selected model. A synthetic regression fixture checks this sizing against the reference estimator and a tokenizer. It is a sizing sanity test, not proof that a language model returns an exact, repeatable count in a live invocation, and neither live number is treated as ground truth. No rates or thresholds were changed.
 
 Different estimates from different models, or after a switch, can reflect estimation variability or differences in the accessible history. They are not measurements of backend context usage, and the skill never explains a difference as one.
+
+**Second live case (same conversation, Luna first).** The visible exchange was still only the greeting messages. `/contextestimate` on Luna reported about `10k` tokens, and after switching to Sol it reported about `1k`. The visible text is a few dozen tokens (a few hundred at most with the earlier report in view), so neither number is credible, and the second run saw essentially the same text as the first. The remaining defect was in how the skill told the model what to count, not in the planning-limit rules. A short "sanity check" paragraph placed after the rates did not stop the oversize, most likely because it was advice to apply after a total already existed and the countable list ("tool results and file text present in your context") could be read as including the skill's own text when it is loaded as a file or tool result. The counting section is now an ordered procedure:
+
+1. collect the visible user and assistant messages (earlier `/contextestimate` reports are ordinary messages, and a number printed in a report is never the conversation's size);
+2. add accessible tool, file, and summary text once each;
+3. exclude everything that isn't transcript even if it arrived as a tool result or file read (this skill, other skills, instructions, tool definitions, hidden reasoning, memory and context metadata, the model's name);
+4. don't infer missing history or backend usage;
+5. size each message and sum, independent of which model is answering;
+6. for a handful of short messages (at most 10 messages and about 500 words, or about 700 CJK characters), report `<1k` and stop.
+
+A regression scenario reproduces the Luna-then-Sol sequence (`greeting-luna-first`, `greeting-sol-second`) and dedicated sizing tests fail any report that sizes such a transcript at `~1k` or more, for example `~5k` or `~10k`. These are automated checks of the instructions and a reference estimator, not of live behavior: the skill has no tokenizer or access to ChatGPT's backend context usage, a language model applying the rules may still miscount or vary between runs, and nothing here guarantees cross-model accuracy. **This live case is not fixed or verified until the updated ZIP is uploaded and retested in ChatGPT Work.**
 
 ## Estimation limits
 
@@ -113,7 +141,7 @@ Skills are documented for ChatGPT Business, Enterprise, Healthcare, and Edu work
 
 1. Download [`dist/contextestimate.zip`](dist/contextestimate.zip) (or zip the `skill/contextestimate/` folder yourself). **After any update, upload the new ZIP again; an installed copy doesn't change on its own.**
 2. In ChatGPT, open **Plugins → Skills → Create → Upload from your computer** and select the ZIP. Wait for the scan to finish.
-3. In **ChatGPT Work**, start a message with `@` and pick **contextestimate**, then send `/contextestimate`, optionally with the arguments above.
+3. In **ChatGPT Work**, type `@` to select a skill, pick **contextestimate**, and send the message, optionally with arguments on the same line (see [Getting a parameterized estimate](#getting-a-parameterized-estimate)), for example `@contextestimate limit=250000`.
 
 `/contextestimate` is an instruction trigger inside the skill, not a documented ChatGPT slash command. The documented way to call a skill explicitly is the `@` mention; whether a bare `/contextestimate` is matched automatically has not been verified.
 
@@ -141,7 +169,7 @@ docs/development-notes.md        platform findings, assumptions, verification st
 ## Verification status
 
 - **Automated, local:** package structure and extraction, limit precedence and provenance, model-evidence rules, the progress bar, planning-risk labels, partial-history output, and instruction-text checks. These test the skill's text and a reference implementation, not ChatGPT, and they don't show that any model follows the instructions.
-- **Live ChatGPT:** the maintainer manually ran installation, invocation, and the greeting smoke test above in Work. Those live runs found the two defects fixed in this version; the fix itself has not been re-tested live. No automated test runs inside ChatGPT, and no independent model has been run against the skill text.
+- **Live ChatGPT:** the maintainer manually ran installation, invocation, and the greeting smoke tests above in Work. Those live runs found the defects fixed in this version (an unknown window turned into a handoff warning, and a greeting exchange sized at ~5k and ~10k tokens). The fixes have not been re-tested live, and the sizing defect in particular may recur. No automated test runs inside ChatGPT, and no independent model has been run against the skill text.
 
 ## License
 

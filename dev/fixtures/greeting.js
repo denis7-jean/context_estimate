@@ -54,4 +54,37 @@ function transcriptForSecondRun() {
   return [...transcriptForFirstRun(), { role: 'assistant', text: firstReport() }, { role: 'user', text: INVOKE_LUNA }];
 }
 
-module.exports = { GREETING, SELECTED_MODELS, NON_COUNTABLE, INVOKE_SOL, INVOKE_LUNA, transcriptForFirstRun, firstReport, transcriptForSecondRun };
+// Second live case: the same four messages, but /contextestimate is first run on
+// Luna (no model evidence in the text, so the baseline applies) and then on Sol.
+// The live Luna run reported ~10k tokens and the Sol run ~1k for essentially
+// the same visible text.
+const INVOKE_LUNA_PLAIN = '/contextestimate';
+
+function transcriptLunaFirstRun() {
+  return [...GREETING, { role: 'user', text: INVOKE_LUNA_PLAIN }];
+}
+
+function lunaFirstReport() {
+  const messages = transcriptLunaFirstRun();
+  const limit = resolveLimit(parseInvocation(INVOKE_LUNA_PLAIN), 'none');
+  return render({ kind: 'estimate', tokens: estimateMessages(messages), limit });
+}
+
+function transcriptSolSecondRun() {
+  return [...transcriptLunaFirstRun(), { role: 'assistant', text: lunaFirstReport() }, { role: 'user', text: INVOKE_SOL }];
+}
+
+module.exports = {
+  GREETING,
+  SELECTED_MODELS,
+  NON_COUNTABLE,
+  INVOKE_SOL,
+  INVOKE_LUNA,
+  INVOKE_LUNA_PLAIN,
+  transcriptForFirstRun,
+  firstReport,
+  transcriptForSecondRun,
+  transcriptLunaFirstRun,
+  lunaFirstReport,
+  transcriptSolSecondRun,
+};

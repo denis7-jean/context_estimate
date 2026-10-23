@@ -24,7 +24,7 @@ const { grade } = require('../evals/grade');
 const skill = fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
 const tokens = (text) => encode(text).length;
 const truth = (messages) => messages.reduce((s, m) => s + tokens(m.text) + 4, 0);
-const NEUTRAL = 'A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.';
+const NEUTRAL = 'A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.';
 
 test('the fixture is the four-message exchange plus invocations, with only visible message text', () => {
   assert.deepEqual(g.GREETING.map((m) => m.text), ['hi', 'Hi! What would you like to work on?', 'Hello World', 'Hello, world! 👋']);

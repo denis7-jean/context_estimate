@@ -172,7 +172,7 @@ test('partial coverage stays UNKNOWN under either denominator and under a user b
 });
 
 test('unknown-model fallback: UNKNOWN, no threshold label, no reassurance, and no handoff advice from the unknown window alone', () => {
-  const NEUTRAL = 'A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.';
+  const NEUTRAL = 'A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.';
   assert.equal(p.NEUTRAL_RECOMMENDATION, NEUTRAL);
   for (let tokens = 0; tokens <= 400000; tokens += 2500) {
     const out = renderFor(tokens, BASELINE);

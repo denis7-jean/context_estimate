@@ -56,8 +56,8 @@ test('README documents precedence, model evidence, the official source, and the 
   assert.match(r, /not the model's actual capacity/);
   assert.match(r, /no table of other models' windows\*\*, and no accuracy guarantee across models/);
   assert.match(r, /isn't a promise that all of it is available for conversation text/);
-  assert.match(r, /\/contextestimate model=gpt-6\.1-sol/);
-  assert.match(r, /\/contextestimate limit=200000/);
+  assert.match(r, /@contextestimate model=gpt-6\.1-sol/);
+  assert.match(r, /@contextestimate limit=200000/);
   assert.match(r, /upload the new ZIP again/);
   assert.match(r, /planning guidance, not measured backend context risk/);
 });
@@ -145,7 +145,7 @@ test('README and notes document the greeting smoke test, the neutral baseline re
     assert.match(doc, /GPT-6 Luna Medium/);
     assert.match(doc, /GPT-6\.1 Sol Medium/);
     assert.match(doc, /Hello, world! 👋/);
-    assert.match(doc, /A model-relative handoff assessment is unavailable\. Provide model=MODEL_ID or limit=N for a planning comparison\./);
+    assert.ok(doc.includes(p.NEUTRAL_RECOMMENDATION));
     assert.match(doc, /estimation variability or differences in the accessible history/);
     assert.match(doc, /not measurements of backend context usage/);
   }

@@ -52,7 +52,7 @@ const INCOMPLETE_SUFFIX = {
 // An unknown model window is not, by itself, a reason to hand off. With the
 // baseline as the only planning limit, the report says so neutrally.
 const NEUTRAL_RECOMMENDATION =
-  'A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.';
+  'A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.';
 const INCOMPLETE_BASE = {
   LOW: 'Consider /handoff before substantial work',
   MEDIUM: 'Consider /handoff before substantial work',
@@ -91,10 +91,15 @@ function normalizeModelId(raw) {
 // the conversation, are never treated as arguments.
 // Options: limit=N, model=MODEL_ID (user assertion of the selected Work
 // model), bar=ascii (plain-text bar fallback).
-function parseInvocation(message) {
-  const m = /^\s*\/contextestimate(?=\s|$)([^\n]*)/.exec(message);
-  if (!m) return null;
-  const args = m[1];
+function parseInvocation(message, { selected = false } = {}) {
+  // The invoking message starts with an `@contextestimate` mention and/or
+  // `/contextestimate` text. `selected` means the platform shows that this
+  // skill was picked for the message (for example with the @ picker) even if
+  // its name is not in the text. A later message holding only `model=...` or
+  // `limit=...` is not an invocation and never updates an earlier report.
+  const m = /^\s*(@contextestimate(?![\w-]))?[ \t]*(\/contextestimate(?![\w-]))?([^\n]*)/.exec(message);
+  if (!m || (!m[1] && !m[2] && !selected)) return null;
+  const args = m[3];
   const opt = (name) => [...args.matchAll(new RegExp(`(?:^|\\s)${name}=(\\S*)`, 'g'))].map((x) => x[1]);
 
   const bars = opt('bar');

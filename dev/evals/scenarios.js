@@ -17,7 +17,7 @@ const tool = (text) => ({ role: 'tool', text });
 
 const BASELINE = '128k (conservative baseline; model window unknown)';
 const SOL = '500k (documented GPT-6.1 Sol / Work default)';
-const NEUTRAL = 'A model-relative handoff assessment is unavailable. Provide model=MODEL_ID or limit=N for a planning comparison.';
+const NEUTRAL = 'A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.';
 
 const englishTurns = [
   u(h.englishChat.split('\n\n')[0]),
@@ -78,6 +78,32 @@ const raw = [
       usageDisplay: '<1%',
       recommendation: NEUTRAL,
       mustNot: [/~\d+k tokens/, /documented|500k/],
+    },
+  },
+  {
+    id: 'greeting-luna-first',
+    what: 'Second live case, first run: the four-message greeting (Luna, then Sol) and /contextestimate with no model evidence. The live run reported ~10k; the visible text is a few dozen tokens, so anything at or above 1k is wrong. Baseline, UNKNOWN, retry guidance',
+    messages: greeting.transcriptLunaFirstRun(),
+    expect: {
+      risk: 'UNKNOWN (model window unknown)',
+      incomplete: 'baseline',
+      limit: BASELINE,
+      tokensDisplay: '<1k',
+      usageDisplay: '<1%',
+      recommendation: NEUTRAL,
+      mustNot: [/~\d+k tokens/, /documented|500k/],
+    },
+  },
+  {
+    id: 'greeting-sol-second',
+    what: 'Second live case, second run: same visible text plus the first report and a Sol invocation. Still under 1k; only the planning limit and risk differ from the Luna run',
+    messages: greeting.transcriptSolSecondRun(),
+    expect: {
+      risk: 'LOW',
+      limit: SOL,
+      tokensDisplay: '<1k',
+      usageDisplay: '<1%',
+      mustNot: [/~\d+k tokens/],
     },
   },
   {
