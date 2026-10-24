@@ -13,6 +13,7 @@ test('documented GPT-6.1 Sol default: 130k / 500k renders exactly (LOW planning 
       'Context Estimate',
       'Estimated accessible text: ~130k tokens',
       'Planning limit: 500k (documented GPT-6.1 Sol / Work default)',
+      'Model: GPT-6.1 Sol (supplied by you with model=; recognized; Work window documented)',
       '[█████░░░░░░░░░░░░░░░] ~26% of planning limit',
       '',
       'Planning risk: LOW',
@@ -31,6 +32,7 @@ test('user override: 91k / 128k renders exactly (HIGH planning risk, budget note
       'Context Estimate',
       'Estimated accessible text: ~91k tokens',
       'Planning limit: 128k (user override)',
+      'Model: not identified (no trusted runtime metadata and no model=)',
       '[██████████████░░░░░░] ~71% of planning limit',
       '',
       'Planning risk: HIGH',
@@ -135,12 +137,14 @@ test('invocation parsing: limit, model, and bar options', () => {
   assert.equal(p.parseInvocation('/contextestimate limit=100000 limit=200000').override.status, 'invalid');
   assert.equal(p.parseInvocation('please /contextestimate'), null);
   assert.equal(p.parseInvocation('/contextestimates'), null);
-  assert.deepEqual(p.parseInvocation('/contextestimate model=gpt-6.1-sol').model, { status: 'asserted', raw: 'gpt-6.1-sol', id: 'gpt-6.1-sol' });
+  const sol = p.parseInvocation('/contextestimate model=gpt-6.1-sol').model;
+  assert.deepEqual([sol.status, sol.raw, sol.id, sol.resolution.state], ['asserted', 'gpt-6.1-sol', 'gpt-6.1-sol', 'recognized']);
   assert.equal(p.parseInvocation('/contextestimate model=GPT-6.1_Sol').model.id, 'gpt-6.1-sol');
   assert.equal(p.parseInvocation('/contextestimate model=gpt-6.1-sol model=gpt-6.1-sol').model.status, 'asserted');
   assert.equal(p.parseInvocation('/contextestimate model=gpt-6.1-sol model=gpt-6-luna').model.status, 'conflicting');
   assert.equal(p.parseInvocation('/contextestimate model=').model.status, 'none');
-  assert.equal(p.parseInvocation('/contextestimate model=!!').model.status, 'none');
+  // A malformed value is still model input, but it is not recognized (see model-resolution.test.js).
+  assert.equal(p.parseInvocation('/contextestimate model=!!').model.resolution.state, 'unrecognized');
   assert.equal(p.parseInvocation('/contextestimate limit=5 model=gpt-6.1-sol bar=ascii').barStyle, 'ascii');
 });
 
@@ -176,6 +180,7 @@ test('50k partial history under the baseline: UNKNOWN for both reasons, never LO
       'Context Estimate',
       'Estimated accessible text: ~50k tokens (partial)',
       'Planning limit: 128k (conservative baseline; model window unknown)',
+      'Model: not identified (no trusted runtime metadata and no model=)',
       '[████████░░░░░░░░░░░░] ~39% of planning limit (partial)',
       '',
       'Planning risk: UNKNOWN (partial history; model window unknown)',
@@ -232,6 +237,7 @@ test('unavailable estimate returns Unavailable and UNKNOWN planning risk, no num
       'Context Estimate',
       'Estimated accessible text: Unavailable',
       'Planning limit: 128k (conservative baseline; model window unknown)',
+      'Model: not identified (no trusted runtime metadata and no model=)',
       '',
       'Planning risk: UNKNOWN',
       'Recommendation:',

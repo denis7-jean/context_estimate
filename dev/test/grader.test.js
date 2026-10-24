@@ -8,25 +8,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { scenarios } = require('../evals/scenarios');
 const { grade } = require('../evals/grade');
-const { p } = require('./helpers');
+const { p, referenceReport } = require('./helpers');
 
 const invocationOf = (s) => p.parseInvocation(s.messages.at(-1).text.split(' — ')[0]);
 
-function reference(s, extra = {}) {
-  const inv = invocationOf(s);
-  const incomplete = s.expect.incomplete;
-  return p.render({
-    kind: 'estimate',
-    tokens: s.truthTokens,
-    limit: p.resolveLimit(inv, 'none'),
-    compacted: incomplete === 'partial' || incomplete === 'both',
-    unmeasured: incomplete === 'unmeasured' || incomplete === 'both',
-    invalidLimitRaw: inv.override.status === 'invalid' ? inv.override.raw : undefined,
-    conflictingModel: inv.model.status === 'conflicting',
-    barStyle: inv.barStyle,
-    ...extra,
-  });
-}
+const reference = referenceReport;
 
 const byId = Object.fromEntries(scenarios.map((s) => [s.id, s]));
 

@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { ROOT, ZIP_PATH, buildZip } = require('../src/bundle');
 const { readZip } = require('../src/zip');
-const { p, SOL, BASELINE, renderFor } = require('./helpers');
+const { p, SOL, BASELINE, renderFor, limitFor } = require('./helpers');
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
 
@@ -31,14 +31,18 @@ test('.gitignore excludes dependencies, logs, and local eval outputs', () => {
 
 test('README example blocks equal the reference renderer output', () => {
   const blocks = [...read('README.md').matchAll(/```\n(Context Estimate\n[\s\S]*?)\n```/g)].map((m) => m[1]);
-  assert.equal(blocks.length, 3);
+  assert.equal(blocks.length, 4);
   assert.equal(blocks[0], renderFor(130000, SOL));
   assert.equal(blocks[1], renderFor(130000, BASELINE));
-  assert.equal(blocks[2], renderFor(130000, SOL, { compacted: true }));
+  assert.equal(blocks[2], renderFor(50000, limitFor('/contextestimate model= GPT-6 Sol')));
+  assert.equal(blocks[3], renderFor(130000, SOL, { compacted: true }));
   assert.match(blocks[0], /Planning risk: LOW/);
   assert.match(blocks[1], /~102% of planning limit/);
   assert.match(blocks[1], /Planning risk: UNKNOWN \(model window unknown\)/);
-  assert.match(blocks[2], /Planning risk: UNKNOWN \(partial history\)/);
+  assert.match(blocks[2], /^Model: GPT-6 Sol \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
+  assert.match(blocks[2], /Planning risk: UNKNOWN \(model window not documented\)/);
+  assert.doesNotMatch(blocks[2], /model=MODEL_ID/);
+  assert.match(blocks[3], /Planning risk: UNKNOWN \(partial history\)/);
   for (const b of blocks) assert.doesNotMatch(b, /lower bound|Estimated usage|Configured context limit/i);
 });
 
@@ -145,7 +149,7 @@ test('README and notes document the greeting smoke test, the neutral baseline re
     assert.match(doc, /GPT-6 Luna Medium/);
     assert.match(doc, /GPT-6\.1 Sol Medium/);
     assert.match(doc, /Hello, world! 👋/);
-    assert.ok(doc.includes(p.NEUTRAL_RECOMMENDATION));
+    assert.match(doc, /a model-relative handoff assessment is unavailable/i);
     assert.match(doc, /estimation variability or differences in the accessible history/);
     assert.match(doc, /not measurements of backend context usage/);
   }
@@ -154,6 +158,6 @@ test('README and notes document the greeting smoke test, the neutral baseline re
   assert.match(d, /Neither live number is ground truth/);
   assert.match(d, /do not show that a language model produces a deterministic exact count in a live invocation/i);
   const blocks = [...r.matchAll(/```\n(Context Estimate\n[\s\S]*?)\n```/g)].map((m) => m[1]);
-  assert.ok(blocks[1].includes(p.NEUTRAL_RECOMMENDATION));
+  assert.ok(blocks[1].includes(p.MODEL_RECOMMENDATIONS.none));
   assert.doesNotMatch(blocks[1], /\/handoff/);
 });

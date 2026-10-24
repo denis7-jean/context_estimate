@@ -12,6 +12,7 @@ With the Work model stated (`/contextestimate model=gpt-6.1-sol`), the planning 
 Context Estimate
 Estimated accessible text: ~130k tokens
 Planning limit: 500k (documented GPT-6.1 Sol / Work default)
+Model: GPT-6.1 Sol (supplied by you with model=; recognized; Work window documented)
 [█████░░░░░░░░░░░░░░░] ~26% of planning limit
 
 Planning risk: LOW
@@ -27,11 +28,28 @@ With no model evidence and no budget, it falls back to a conservative baseline a
 Context Estimate
 Estimated accessible text: ~130k tokens
 Planning limit: 128k (conservative baseline; model window unknown)
+Model: not identified (no trusted runtime metadata and no model=)
 [████████████████████] ~102% of planning limit
 
 Planning risk: UNKNOWN (model window unknown)
 Recommendation:
-A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.
+A model-relative handoff assessment is unavailable because the model window is unknown. For a planning comparison, invoke this skill again with `limit=N` in the same message, e.g. `@contextestimate limit=250000`.
+
+Note: Visible-text estimate against a conservative baseline; the model window and backend usage are unknown.
+```
+
+A model you name that the registry recognizes, but for which OpenAI documents no ChatGPT Work window, is reported as exactly that (here `/contextestimate model= GPT-6 Sol`, with a space after `=`). The baseline still draws the bar, but the recommendation says what is unknown and offers only your own budget, which is a planning figure and not the model's real window:
+
+```
+Context Estimate
+Estimated accessible text: ~50k tokens
+Planning limit: 128k (conservative baseline; model window unknown)
+Model: GPT-6 Sol (supplied by you with model=; recognized; no ChatGPT Work window documented)
+[████████░░░░░░░░░░░░] ~39% of planning limit
+
+Planning risk: UNKNOWN (model window not documented)
+Recommendation:
+GPT-6 Sol was recognized, but no ChatGPT Work context window is documented, so a model-relative handoff assessment is unavailable. For a planning comparison, invoke this skill again with your own budget in the same message, e.g. `@contextestimate limit=250000` (a planning figure, not the model's actual window).
 
 Note: Visible-text estimate against a conservative baseline; the model window and backend usage are unknown.
 ```
@@ -42,6 +60,7 @@ When earlier history is summarized or truncated, or attachments/images can't be 
 Context Estimate
 Estimated accessible text: ~130k tokens (partial)
 Planning limit: 500k (documented GPT-6.1 Sol / Work default)
+Model: GPT-6.1 Sol (supplied by you with model=; recognized; Work window documented)
 [█████░░░░░░░░░░░░░░░] ~26% of planning limit (partial)
 
 Planning risk: UNKNOWN (partial history)
@@ -96,11 +115,25 @@ An unknown window never triggers a handoff recommendation by itself. A recommend
 | GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna (IDs not documented) | not documented | Learn |
 
 - A listing does not mean a model is available to every user: availability varies by plan, workspace settings, role, and rollout, and the registry is not the exact list any one account sees.
-- A window is an exact number only where an official source explicitly gives a ChatGPT Work or Work-and-Codex value. Windows are never inferred from API documentation, output limits, usage allowances, or similarity to another model, so everything marked "not documented" keeps the baseline and `UNKNOWN (model window unknown)`.
-- **Ordinary estimates do not browse.** Only if web search is available, the skill checks official OpenAI sources when you explicitly ask for current model or window information, when you give a model that isn't in the registry, or when that model's row was last checked more than 90 days ago (if it doesn't reliably know today's date, it treats the row as fresh). A looked-up value is accepted only if the source explicitly scopes that number to ChatGPT Work or Work and Codex for that model. It is used for that invocation only and labeled `documented <Model> / Work default; live check`. The skill never claims it or its registry was updated, never saves it, and never implies the model is available to your workspace.
+- A window is an exact number only where an official source explicitly gives a ChatGPT Work or Work-and-Codex value. Windows are never inferred from API documentation, output limits, usage allowances, or similarity to another model, so everything marked "not documented" keeps the baseline and `UNKNOWN (model window not documented)`.
+- **Ordinary estimates do not browse.** Only if web search is available, the skill checks official OpenAI sources when you explicitly ask for current model or window information, when you give a model that isn't in the registry, when that model's row was last checked more than 90 days ago (if it doesn't reliably know today's date, it treats the row as fresh), or when your invocation includes `model=` for a recognized model with no documented Work window. In that last case it searches for that exact model's ChatGPT Work context window; invocations without `model=` never trigger it. A looked-up value is accepted only if the source explicitly scopes that number to ChatGPT Work or Work and Codex for that model. It is used for that invocation only and labeled `documented <Model> / Work default; live check`. The skill never claims it or its registry was updated, never saves it, and never implies the model is available to your workspace.
 - If the source is inaccessible, ambiguous, stale, or API-only, or there is no search, the window stays unknown and the baseline applies. A registry window older than 90 days that can't be rechecked is treated as unknown (with a note) until you re-upload a refreshed skill or pass `limit=N`.
 - Which model is current still comes only from `model=MODEL_ID` (your assertion) or trusted runtime metadata; a lookup or the registry never decides it.
 - The live lookup has not been verified in ChatGPT Work, and no registry value has been tested there; the automated tests check policy and instruction text only.
+
+### How the model was resolved
+
+Every report has a `Model:` line saying where the model name came from and what is known about it. A name you typed is always "supplied by you with `model=`", never "detected"; "from trusted runtime metadata" appears only when the platform itself supplies the model and the Work surface.
+
+| State | `Model:` line (status) | Planning risk | Recommendation |
+| --- | --- | --- | --- |
+| Recognized, Work window documented (GPT-6.1 Sol) | `recognized; Work window documented` | normal LOW to CRITICAL | normal planning guidance |
+| Recognized, no documented Work window | `recognized; no ChatGPT Work window documented` | `UNKNOWN (model window not documented)` | says the model was recognized but no Work window is documented; offers only `limit=N` as your own budget |
+| Not recognized | `not recognized, not in the Work model registry` | `UNKNOWN (model not recognized)` | asks for a clearer model name or `limit=N` |
+| Ambiguous or incomplete (`Sol`, `Luna`) | `ambiguous or incomplete, could be ...` | `UNKNOWN (model ambiguous)` | asks for the full model name or `limit=N` |
+| No model information | `not identified (no trusted runtime metadata and no model=)` | `UNKNOWN (model window unknown)` | says the window is unknown; offers `limit=N`; does not suggest that repeating a model name will reveal it |
+
+`model=` is parsed as the rest of the first line (up to the next `limit=`, `bar=`, or `model=`), so `model= GPT-6 Sol`, `model=GPT-5.6 Terra`, and quoted or backtick-quoted names work, with spaces around `=` allowed. A name matches a registry row by ID, full name, name without `GPT-` (`6 Sol`), or the official short label `Astra`, optionally followed by a reasoning effort as the model picker shows it (`GPT-6.1 Sol Medium`). Case, spaces, hyphens, and underscores don't matter. Bare family words (`Sol`, `Luna`) are ambiguous. No ID or window is ever invented, and none of these states recommends `/handoff` on its own. Missing history or unmeasured attachments still do, as before.
 
 ### Getting a parameterized estimate
 
@@ -115,15 +148,17 @@ When a report says a model-relative assessment is unavailable, the next step is 
 
 - Sending a separate follow-up message that contains only `model=...` or `limit=...` does not necessarily invoke the skill, and it never updates the previous report. A bare message like that is not an invocation.
 - On the new invocation the parameter applies to that run only, and the estimate is recalculated from the visible conversation that is accessible now (it doesn't patch the earlier report's numbers). The next plain invocation falls back to the baseline again unless a saved budget applies.
-- `model=MODEL_ID` is a user-provided assertion, not automatic model detection. It changes the limit only when OpenAI documents a Work window for that model; today that is just `gpt-6.1-sol`, so `model=gpt-6-luna` is accepted but leaves the baseline and `UNKNOWN (model window unknown)`.
+- `model=NAME` is a user-provided assertion, not automatic model detection. It changes the limit only when OpenAI documents a Work window for that model; today that is just GPT-6.1 Sol, so `model=gpt-6-luna` is recognized and reported as such but leaves the baseline and `UNKNOWN (model window not documented)`. Repeating the same model name won't change that; only `limit=N` gives a comparison, and `limit=N` is your own planning budget, not the model's real window.
 - `limit=N` is a user-provided planning budget. It works for any model and is labeled `user override`, not the model's capacity.
 - `/contextestimate` is instruction text the skill recognizes. It has not been verified as a registered ChatGPT slash command, so the `@` form above is the one to use.
 
 ### Observed smoke tests (ChatGPT Work)
 
+**Model resolution (latest live tests).** With GPT-6.1 Sol selected and no `model=`, the skill reported the registered 500k default, so the model was identified without `model=`. The skill's rules accept only trusted runtime metadata for that (not the assistant naming itself), and which of the two happened is not established. With GPT-6 Sol, GPT-6 Luna, GPT-6 Astra, and GPT-5.6 Terra it reported the 128k baseline and `UNKNOWN`, including for `/contextestimate model= GPT-6 Sol`, and asked to repeat `model=MODEL_ID`. Those results could not show whether a name had been parsed or recognized: `model= GPT-6 Sol` (a space after `=`) was in fact not parsed at all, and a recognized model with no documented window looked identical to an unrecognized one. Fixes: `model=` accepts whitespace around `=`, multiword names, quotes and backticks, and unambiguous aliases; every report says how the model was resolved; each state has its own risk reason and recommendation; and a recognized model with no documented window is only asked for `limit=N`. Regression scenarios cover the observed input and the other models; the accessible-text estimate is checked to be identical whichever model is named. These are automated checks of the instructions and a reference implementation. None has been run in live ChatGPT Work since the change.
+
 In a new Work chat the user sent `hi` on GPT-6 Luna Medium, got "Hi! What would you like to work on?", sent `Hello World` on GPT-6.1 Sol Medium, got "Hello, world! 👋", and then ran `/contextestimate` on Sol (`<1k` tokens against the documented 500k) and again on Luna. The Luna run reported `~5k` tokens against the 128k baseline with `UNKNOWN` risk and a recommendation to consider a handoff because the model window is unknown. That showed two problems, both fixed here:
 
-- **An unknown window was turned into a handoff warning.** It now produces a neutral recommendation (see the second example above).
+- **An unknown window was turned into a handoff warning.** It now produces a neutral recommendation (see the examples above) that depends on why the window is unknown.
 - **The same tiny conversation was sized ~5x larger on one model.** The accessible text in that exchange is a few dozen tokens, so ~5k is not a plausible count of it. One unverified explanation is that non-countable material (the skill's own text (~3.9k tokens in the tested version), instructions, memory, tool definitions) was counted. The skill text now says outright that a few short messages are well under 1k, that a total in the thousands for such a chat means non-countable text is being counted, and that the total should not depend on the selected model. A synthetic regression fixture checks this sizing against the reference estimator and a tokenizer. It is a sizing sanity test, not proof that a language model returns an exact, repeatable count in a live invocation, and neither live number is treated as ground truth. No rates or thresholds were changed.
 
 Different estimates from different models, or after a switch, can reflect estimation variability or differences in the accessible history. They are not measurements of backend context usage, and the skill never explains a difference as one.
@@ -187,8 +222,8 @@ docs/development-notes.md        platform findings, assumptions, verification st
 
 ## Verification status
 
-- **Automated, local:** package structure and extraction, limit precedence and provenance, model-evidence rules, the progress bar, planning-risk labels, partial-history output, and instruction-text checks. These test the skill's text and a reference implementation, not ChatGPT, and they don't show that any model follows the instructions.
-- **Live ChatGPT:** the maintainer manually ran installation, invocation, and the greeting smoke tests above in Work. Those live runs found the defects fixed in this version (an unknown window turned into a handoff warning, and a greeting exchange sized at ~5k and ~10k tokens). The fixes have not been re-tested live, and the sizing defect in particular may recur. No automated test runs inside ChatGPT, and no independent model has been run against the skill text.
+- **Automated, local:** all 198 local tests pass (`cd dev && npm test`). They cover package structure and extraction, limit precedence and provenance, model-evidence rules, `model=` parsing and registry matching, the per-state model reporting, the lookup acceptance rules, the progress bar, planning-risk labels, partial-history output, and instruction-text checks. These test the skill's text and a reference implementation, not ChatGPT, and they don't show that any model follows the instructions.
+- **Live ChatGPT:** the maintainer manually ran installation, invocation, and the greeting smoke tests above in Work. Those live runs found the defects fixed in this version (an unknown window turned into a handoff warning, a greeting exchange sized at ~5k and ~10k tokens, and `model=` input that was not parsed or distinguishable from an unrecognized name). The fixes have not been re-tested live, and the sizing defect in particular may recur. The updated skill (model parsing and reporting, the new recommendations) and the targeted model lookup have not been verified in live ChatGPT Work: neither has been uploaded or run there, and whether Work gives a skill search access is unknown. No automated test runs inside ChatGPT, and no independent model has been run against the skill text.
 
 ## License
 

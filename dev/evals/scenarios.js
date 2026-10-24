@@ -17,7 +17,11 @@ const tool = (text) => ({ role: 'tool', text });
 
 const BASELINE = '128k (conservative baseline; model window unknown)';
 const SOL = '500k (documented GPT-6.1 Sol / Work default)';
-const NEUTRAL = 'A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.';
+const { MODEL_RECOMMENDATIONS } = require('../src/policy');
+const NEUTRAL = MODEL_RECOMMENDATIONS.none;
+const M_NONE = 'Model: not identified (no trusted runtime metadata and no model=)';
+const M_SOL = 'Model: GPT-6.1 Sol (supplied by you with model=; recognized; Work window documented)';
+const M_UNDOC = (name) => `Model: ${name} (supplied by you with model=; recognized; no ChatGPT Work window documented)`;
 
 const englishTurns = [
   u(h.englishChat.split('\n\n')[0]),
@@ -33,6 +37,72 @@ const SUMMARY_TURNS = [
   u('OK, where were we on the checklist?'),
   a('We had finished the cache step and still needed owners for the base image and a retention policy for failed runners.'),
 ];
+
+// Live regression: model= resolution states, one scenario each. The short
+// conversation keeps the accessible text under 1k so only the model handling
+// differs between them.
+function modelScenario(id, what, invocation, expect, extra = {}) {
+  return {
+    id,
+    what,
+    messages: [...englishTurns, u(invocation)],
+    expect: { tokensDisplay: '<1k', usageDisplay: '<1%', ...expect },
+    ...extra,
+  };
+}
+
+function modelScenarios() {
+  const undoc = (name, risk = 'UNKNOWN (model window not documented)') => ({
+    risk,
+    incomplete: 'baseline',
+    limit: BASELINE,
+    modelLine: M_UNDOC(name),
+    recommendation: MODEL_RECOMMENDATIONS.undocumented(name),
+    mustNot: [/~\d+k tokens/, /documented GPT|500k/, /model=MODEL_ID/],
+  });
+  return [
+    modelScenario('model-observed-gpt-6-sol', 'The observed input "/contextestimate model= GPT-6 Sol": space after "=", multiword name. Recognized, no documented Work window: baseline, UNKNOWN, own recommendation, no request to repeat model=', '/contextestimate model= GPT-6 Sol', undoc('GPT-6 Sol')),
+    modelScenario('model-gpt-5-6-terra', 'Multiword display name with a dot', '@contextestimate model=GPT-5.6 Terra', undoc('GPT-5.6 Terra')),
+    modelScenario('model-luna-backticks', 'Backtick-quoted name', '/contextestimate model=`GPT-6 Luna`', undoc('GPT-6 Luna')),
+    modelScenario('model-astra-label', 'Official short label "Astra" resolves to GPT-6 Astra', '/contextestimate model=Astra', undoc('GPT-6 Astra')),
+    modelScenario('model-sol-picker-label', 'GPT-6.1 Sol with the picker reasoning word: recognized, documented 500k', '@contextestimate model=GPT-6.1 Sol Medium', {
+      risk: 'LOW',
+      limit: SOL,
+      modelLine: M_SOL,
+      must: [/Visible-text estimate against the documented window/],
+    }),
+    modelScenario('model-unrecognized', 'A name that is not in the Work registry: said so, asks for a clearer name or limit=N', '/contextestimate model=GPT-7 Foo', {
+      risk: 'UNKNOWN (model not recognized)',
+      incomplete: 'baseline',
+      limit: BASELINE,
+      modelLine: 'Model: "GPT-7 Foo" (supplied by you with model=; not recognized, not in the Work model registry)',
+      recommendation: MODEL_RECOMMENDATIONS.unrecognized,
+      mustNot: [/recognized, but/, /documented GPT|500k/],
+    }),
+    modelScenario('model-ambiguous-sol', 'A bare family word matches several registry names: ambiguous, no guess', '/contextestimate model=Sol', {
+      risk: 'UNKNOWN (model ambiguous)',
+      incomplete: 'baseline',
+      limit: BASELINE,
+      modelLine: 'Model: "Sol" (supplied by you with model=; ambiguous or incomplete, could be GPT-6.1 Sol, GPT-6 Sol, GPT-5.6 Sol)',
+      recommendation: MODEL_RECOMMENDATIONS.ambiguous('GPT-6.1 Sol, GPT-6 Sol, GPT-5.6 Sol'),
+      mustNot: [/documented GPT|500k/],
+    }),
+    modelScenario('model-lookup-none-found', 'Explicit model= for a recognized model with no documented window; a search found no Work-scoped value', '/contextestimate model=GPT-6 Luna', {
+      ...undoc('GPT-6 Luna'),
+      must: [/Note: Searched official OpenAI sources for GPT-6 Luna; no ChatGPT Work context window was found\./],
+    }, { lookup: 'none-found' }),
+    modelScenario('model-lookup-unavailable', 'Explicit model= but search is not available in the runtime', '/contextestimate model=GPT-5.6 Terra', {
+      ...undoc('GPT-5.6 Terra'),
+      must: [/Note: Search is unavailable here, so GPT-5.6 Terra's Work window stays unknown\./],
+    }, { lookup: 'unavailable' }),
+    modelScenario('model-with-budget', 'A recognized model plus limit=N: the budget is the planning limit (user override), the model line still says no Work window is documented', '/contextestimate limit=250000 model=GPT-6 Sol', {
+      risk: 'LOW',
+      limit: '250k (user override)',
+      modelLine: M_UNDOC('GPT-6 Sol'),
+      must: [/Visible-text share of your planning budget/],
+    }),
+  ];
+}
 
 const raw = [
   {
@@ -68,16 +138,16 @@ const raw = [
   },
   {
     id: 'greeting-luna',
-    what: 'Same exchange plus the first report, /contextestimate again after switching to GPT-6 Luna: same accessible text, still under 1k, baseline labeled, no handoff advice because the window is unknown',
+    what: 'Same exchange plus the first report, /contextestimate model=gpt-6-luna after switching to GPT-6 Luna: same accessible text, still under 1k, the model is recognized but has no documented Work window, baseline labeled, no handoff advice',
     messages: greeting.transcriptForSecondRun(),
     expect: {
-      risk: 'UNKNOWN (model window unknown)',
+      risk: 'UNKNOWN (model window not documented)',
       incomplete: 'baseline',
       limit: BASELINE,
       tokensDisplay: '<1k',
       usageDisplay: '<1%',
-      recommendation: NEUTRAL,
-      mustNot: [/~\d+k tokens/, /documented|500k/],
+      recommendation: MODEL_RECOMMENDATIONS.undocumented('GPT-6 Luna'),
+      mustNot: [/~\d+k tokens/, /documented GPT|500k/],
     },
   },
   {
@@ -106,6 +176,7 @@ const raw = [
       mustNot: [/~\d+k tokens/],
     },
   },
+  ...modelScenarios(),
   {
     id: 'english-short',
     what: 'Short English conversation under a user budget',
@@ -298,7 +369,7 @@ const raw = [
     id: 'pinned-budget-model-switch',
     what: 'The user pins a budget while switching to an undocumented model: the budget stays, labeled as a user override, not the model capacity',
     messages: [u('Switching models now.'), a('Noted.'), u('/contextestimate limit=200000 model=gpt-6-luna')],
-    expect: { risk: 'LOW', limit: '200k (user override)', tokensDisplay: '<1k', mustNot: [/documented|Luna|capacity/i] },
+    expect: { risk: 'LOW', limit: '200k (user override)', tokensDisplay: '<1k', mustNot: [/documented GPT|capacity/i] },
   },
   {
     id: 'injection',
@@ -334,6 +405,22 @@ const raw = [
 function truthTokens(messages) {
   return messages.reduce((s, m) => s + encode(m.text).length + 4, 0);
 }
+
+const MODEL_LINES = {
+  'new-chat-sol': M_SOL,
+  'new-chat-unknown-model': M_NONE,
+  'greeting-sol': M_SOL,
+  'greeting-luna': M_UNDOC('GPT-6 Luna'),
+  'greeting-luna-first': M_NONE,
+  'greeting-sol-second': M_SOL,
+  'model-name-in-quoted-content': M_NONE,
+  'self-identification': M_NONE,
+  'compacted-unknown-model': M_NONE,
+  'pinned-budget-model-switch': M_UNDOC('GPT-6 Luna'),
+  'unmeasured-attachment': M_SOL,
+  'invalid-limit': M_SOL,
+};
+for (const s of raw) if (MODEL_LINES[s.id]) s.expect.modelLine = MODEL_LINES[s.id];
 
 const scenarios = raw.map((s) => ({ ...s, truthTokens: truthTokens(s.messages) }));
 

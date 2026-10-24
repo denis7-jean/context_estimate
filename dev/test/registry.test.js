@@ -84,7 +84,8 @@ test('registry models without a documented Work window stay unknown and use the 
     assert.deepEqual(p.needsFreshnessLookup({ modelId: id, today: FRESH }), { needed: false, reasons: [] }, id);
   }
   const out = renderFor(1000, limitFor('/contextestimate model=gpt-6-astra'));
-  assert.match(out, /^Planning risk: UNKNOWN \(model window unknown\)$/m);
+  assert.match(out, /^Model: GPT-6 Astra \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
+  assert.match(out, /^Planning risk: UNKNOWN \(model window not documented\)$/m);
   assert.match(out, /Planning limit: 128k \(conservative baseline; model window unknown\)/);
 });
 
@@ -238,10 +239,10 @@ test('ordinary estimates never require a lookup, and the reference code has no n
 
 test('SKILL.md allows browsing only under the conditional lookup rules', () => {
   assert.match(skill, /Do not browse for an ordinary estimate/);
-  assert.match(skill, /If web search or browsing is available, check official OpenAI sources \(for example help\.openai\.com and learn\.chatgpt\.com\) only when \(a\) the user explicitly asks for current model or window information, \(b\) the model identified by current evidence is not in the registry, or \(c\) that model's registry row was last checked more than 90 days before today's date \(if you do not reliably know today's date, treat the row as fresh\)/);
+  assert.match(skill, /If web search or browsing is available, check official OpenAI sources \(for example help\.openai\.com and learn\.chatgpt\.com\) only when \(a\) the user explicitly asks for current model or window information, \(b\) the model is not in the registry, \(c\) its registry row was last checked more than 90 days before today's date \(if you do not reliably know today's date, treat the row as fresh\), or \(d\) this invocation's `model=` names a recognized model with no documented Work window: search for that exact model's ChatGPT Work context window/);
   assert.match(skill, /A lookup never decides which model is current/);
   assert.match(skill, /Use its result for that invocation only: never say the skill or its registry was updated, never save it into `saved_limit`, and never imply the model is available to the user's plan or workspace/);
-  assert.match(skill, /Accept a looked-up window only if the official source explicitly scopes that exact number to ChatGPT Work or to Work and Codex for the model in question/);
+  assert.match(skill, /Accept a looked-up window only if the official source explicitly scopes that exact number to ChatGPT Work or to Work and Codex for that exact model/);
   assert.match(skill, /Do not accept API context windows, maximum output limits, usage allowances or credit rates, Codex-only or Chat-only values, a figure for another model, or a value inferred from a model family/);
   assert.match(skill, /If the source is inaccessible, ambiguous, stale, or API-only, or no search is available, keep the window unknown \(baseline\)/);
   assert.match(skill, /A registry window older than 90 days that you could not recheck is treated as unknown \(baseline\), with the extra line `Note: The registry entry for <Model name> is older than 90 days and was not rechecked, so its window is treated as unknown\.`/);
@@ -251,7 +252,7 @@ test('SKILL.md allows browsing only under the conditional lookup rules', () => {
   assert.match(skill, /Do not infer a window from API documentation, output limits, usage allowances, credit rates, or a model in the same family, and do not add rows from memory/);
   // Evidence rules for the model itself are unchanged.
   assert.match(skill, /Accept only \(a\) runtime metadata the platform itself supplies for this invocation that identifies both the current model and the Work surface, or \(b\) a `model=` value in this invocation's first line/);
-  assert.match(skill, /It is a user assertion, not detection/);
+  assert.match(skill, /the user's assertion of the Work model currently selected, not detection/);
 });
 
 test('README and development notes document the registry, sources, lookup rules, and limitations', () => {

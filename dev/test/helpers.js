@@ -27,6 +27,7 @@ function referenceReport(scenario, extra = {}) {
     invalidLimitRaw: inv.override.status === 'invalid' ? inv.override.raw : undefined,
     conflictingModel: inv.model.status === 'conflicting',
     barStyle: inv.barStyle,
+    lookup: scenario.lookup,
     ...extra,
   });
 }

@@ -24,7 +24,7 @@ const { grade } = require('../evals/grade');
 const skill = fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
 const tokens = (text) => encode(text).length;
 const truth = (messages) => messages.reduce((s, m) => s + tokens(m.text) + 4, 0);
-const NEUTRAL = 'A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.';
+const LUNA_REC = p.MODEL_RECOMMENDATIONS.undocumented('GPT-6 Luna');
 
 test('the fixture is the four-message exchange plus invocations, with only visible message text', () => {
   assert.deepEqual(g.GREETING.map((m) => m.text), ['hi', 'Hi! What would you like to work on?', 'Hello World', 'Hello, world! 👋']);
@@ -92,7 +92,7 @@ test('Sol run: the documented 500k default applies and the share is <1%', () => 
   assert.match(out, /^Planning risk: LOW$/m);
 });
 
-test('Luna run: baseline denominator, the same <1k text, UNKNOWN, and no handoff advice', () => {
+test('Luna run: baseline denominator, the same <1k text, UNKNOWN, recognized-but-undocumented wording, and no handoff advice', () => {
   const lim = limitFor(g.INVOKE_LUNA);
   assert.deepEqual(lim, BASELINE);
   const out = renderFor(h.estimateMessages(g.transcriptForSecondRun()), lim);
@@ -100,9 +100,10 @@ test('Luna run: baseline denominator, the same <1k text, UNKNOWN, and no handoff
   assert.doesNotMatch(out, /~\d+k tokens/);
   assert.match(out, /^Planning limit: 128k \(conservative baseline; model window unknown\)$/m);
   assert.match(out, /^\[█░{19}\] <1% of planning limit$/m);
-  assert.match(out, /^Planning risk: UNKNOWN \(model window unknown\)$/m);
-  assert.ok(out.includes(`Recommendation:\n${NEUTRAL}`));
-  assert.doesNotMatch(out, /\/handoff|500k|documented|Sol/);
+  assert.match(out, /^Model: GPT-6 Luna \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
+  assert.match(out, /^Planning risk: UNKNOWN \(model window not documented\)$/m);
+  assert.ok(out.includes(`Recommendation:\n${LUNA_REC}`));
+  assert.doesNotMatch(out, /\/handoff|500k|documented GPT|Sol/);
 });
 
 test('switching Sol -> Luna does not reuse the old denominator or inflate the same accessible transcript', () => {
@@ -114,7 +115,7 @@ test('switching Sol -> Luna does not reuse the old denominator or inflate the sa
   const luna = renderFor(second, limitFor(g.INVOKE_LUNA));
   assert.match(sol, /<1k tokens/);
   assert.match(luna, /<1k tokens/);
-  assert.doesNotMatch(luna, /500k|documented/);
+  assert.doesNotMatch(luna, /500k|documented GPT/);
   // Switching back re-resolves the documented default; nothing carried over from the Luna run.
   const back = renderFor(second, limitFor(g.INVOKE_SOL));
   assert.match(back, /^Planning limit: 500k \(documented GPT-6\.1 Sol \/ Work default\)$/m);
@@ -160,7 +161,7 @@ test('the greeting scenarios are in the behavioral set and the grader accepts th
   assert.ok(grade(sol, render(sol)).pass);
   assert.ok(grade(luna, render(luna)).pass);
   // A live-style ~5k report with a handoff recommendation (the observed defect) is rejected.
-  const bad = render(luna).replace('<1k tokens', '~5k tokens').replace('<1% of planning limit', '~4% of planning limit').replace(NEUTRAL, 'Consider /handoff before substantial work; model window unknown.');
+  const bad = render(luna).replace('<1k tokens', '~5k tokens').replace('<1% of planning limit', '~4% of planning limit').replace(LUNA_REC, 'Consider /handoff before substantial work; model window unknown.');
   assert.equal(grade(luna, bad).pass, false);
 });
 

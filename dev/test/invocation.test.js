@@ -84,32 +84,39 @@ test('model=gpt-6-luna is an assertion that records the model but, with no docum
   const inv = p.parseInvocation('@contextestimate model=gpt-6-luna');
   assert.equal(inv.model.id, 'gpt-6-luna');
   assert.deepEqual(p.resolveLimit(inv, 'none'), BASELINE);
-  assert.match(renderFor(1000, p.resolveLimit(inv, 'none')), /^Planning risk: UNKNOWN \(model window unknown\)$/m);
+  const out = renderFor(1000, p.resolveLimit(inv, 'none'));
+  assert.match(out, /^Model: GPT-6 Luna \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
+  assert.match(out, /^Planning risk: UNKNOWN \(model window not documented\)$/m);
 });
 
-test('the neutral recommendation spells out the retry step with valid @ examples', () => {
-  const rec = p.NEUTRAL_RECOMMENDATION;
-  assert.match(rec, /^A model-relative handoff assessment is unavailable\. /);
-  assert.match(rec, /invoke this skill again with the parameter in the same message/);
-  assert.ok(rec.includes('`@contextestimate limit=250000`'));
-  assert.ok(rec.includes('`@contextestimate model=MODEL_ID`'));
-  assert.doesNotMatch(rec, /\/handoff|reply with|send (a )?(follow-up|separate)|then send/i);
-  // The suggested examples are valid invocations.
-  for (const example of ['@contextestimate limit=250000', '@contextestimate model=MODEL_ID']) {
-    assert.ok(p.parseInvocation(example), example);
+test('every unknown-model recommendation spells out the retry step in the same message, with a valid @ example, and never asks to repeat a known model name', () => {
+  const recs = [
+    p.MODEL_RECOMMENDATIONS.none,
+    p.MODEL_RECOMMENDATIONS.undocumented('GPT-6 Sol'),
+    p.MODEL_RECOMMENDATIONS.unrecognized,
+    p.MODEL_RECOMMENDATIONS.ambiguous('GPT-6.1 Sol, GPT-6 Sol'),
+  ];
+  for (const rec of recs) {
+    assert.match(rec, /a model-relative handoff assessment is unavailable/i);
+    assert.match(rec, /invoke this skill again .*in the same message/i);
+    assert.ok(rec.includes('`@contextestimate limit=250000`'), rec);
+    assert.doesNotMatch(rec, /\/handoff|reply with|send (a )?(follow-up|separate)|then send|model=MODEL_ID/i);
   }
+  // The suggested example is a valid invocation with a user-defined budget.
   assert.equal(p.parseInvocation('@contextestimate limit=250000').override.value, 250000);
-  assert.equal(p.parseInvocation('@contextestimate model=MODEL_ID').model.id, 'model-id');
+  // A recognized model is never asked to repeat model=...; `limit=N` is a budget, not the model's window.
+  const undoc = p.MODEL_RECOMMENDATIONS.undocumented('GPT-6 Sol');
+  assert.match(undoc, /a planning figure, not the model's actual window/);
+  assert.doesNotMatch(p.MODEL_RECOMMENDATIONS.none, /model=/);
 });
 
 test('SKILL.md states the retry flow, parameter scope, and evidence rules', () => {
   assert.match(skill, /A separate later message containing only `model=\.\.\.` or `limit=\.\.\.` is not an invocation unless it also selects this skill, and it never updates an earlier report/);
-  assert.match(skill, /the user invokes or selects this skill again with the parameter in that same message/);
-  assert.match(skill, /apply the parameter to that run only and recalculate from the visible conversation accessible now; do not edit or build on the previous report's numbers/);
+  assert.match(skill, /The user invokes or selects this skill again with the parameter in that same message; apply it to that run only and recalculate from the visible conversation accessible now; do not edit or build on the previous report's numbers/);
   assert.match(skill, /`@contextestimate limit=250000` or `\/contextestimate model=gpt-6\.1-sol`/);
   assert.match(skill, /OpenAI documents `@` as the way to select a skill in ChatGPT/);
   assert.match(skill, /never tell the user it is a registered command/);
-  assert.match(skill, /It is a user assertion, not detection/);
+  assert.match(skill, /the user's assertion of the Work model currently selected, not detection/);
   assert.match(skill, /Options apply to this run only\. Do not claim they persist\./);
 });
 

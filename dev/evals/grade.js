@@ -11,14 +11,14 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { scenarios } = require('./scenarios');
-const { RECOMMENDATIONS, NEUTRAL_RECOMMENDATION, barFill } = require('../src/policy');
+const { RECOMMENDATIONS, barFill } = require('../src/policy');
 
-const REASON = '(?:partial history|unmeasured attachments|model window unknown)';
+const REASON = '(?:partial history|unmeasured attachments|model window unknown|model window not documented|model not recognized|model ambiguous)';
 const RISK_RE = new RegExp(`^Planning risk: (LOW|MEDIUM|HIGH|CRITICAL|UNKNOWN)(?: \\((${REASON}(?:; ${REASON})*)\\))?$`);
 const BAR_RE = /^\[([█░]{20}|[#.]{20})\] (<1%|~\d+%) of planning limit(?: \((?:partial|text only)\))?$/;
 const BASE = '(Consider \\/handoff before substantial work|Run \\/handoff before starting another major task|Run \\/handoff now before continuing substantial work)';
 const HIST = '(?:earlier history is not counted|attachments or images are not counted|earlier history and attachments or images are not counted)';
-const UNKNOWN_REC_RE = new RegExp(`^${BASE}; ${HIST}\\.$`);
+const PARTIAL_REC_RE = new RegExp(`^${BASE}; ${HIST}\\.$`);
 
 function parseTokens(display) {
   if (/^<1k\b/.test(display)) return { lo: 0, hi: 999, mid: 500 };
@@ -37,54 +37,60 @@ function grade(scenario, output) {
   const lines = raw.filter((l) => l !== '');
   const exp = scenario.expect;
 
-  // Layout: header, text, planning limit, bar+share, planning risk,
+  // Layout: header, text, planning limit, model, bar+share, planning risk,
   // "Recommendation:", recommendation, notes.
   add('no code fences', !/```/.test(text));
   const layoutOk =
-    lines.length >= 8 &&
-    lines.length <= 10 &&
+    lines.length >= 9 &&
+    lines.length <= 12 &&
     /^Context Estimate$/.test(lines[0]) &&
     /^Estimated accessible text: .+$/.test(lines[1]) &&
     /^Planning limit: .+$/.test(lines[2]) &&
-    /^\[/.test(lines[3]) &&
-    /^Planning risk: /.test(lines[4]) &&
-    /^Recommendation:$/.test(lines[5]);
-  add('line order matches the documented layout', layoutOk, lines.slice(0, 6).join(' | '));
-  const blanksOk = raw[4] === '' && raw[raw.length - 1] !== '' && raw.filter((l) => l === '').length === 2 && raw.indexOf('', 5) > 5;
+    /^Model: .+$/.test(lines[3]) &&
+    /^\[/.test(lines[4]) &&
+    /^Planning risk: /.test(lines[5]) &&
+    /^Recommendation:$/.test(lines[6]);
+  add('line order matches the documented layout', layoutOk, lines.slice(0, 7).join(' | '));
+  const blanksOk = raw[5] === '' && raw[raw.length - 1] !== '' && raw.filter((l) => l === '').length === 2 && raw.indexOf('', 6) > 6;
   add('blank lines after the bar and after the recommendation', blanksOk);
-  const notes = lines.slice(7);
-  add('1–3 Note lines and nothing else after the recommendation', notes.length >= 1 && notes.length <= 3 && notes.every((l) => l.startsWith('Note: ')), notes.join(' | '));
+  const notes = lines.slice(8);
+  add('1–4 Note lines and nothing else after the recommendation', notes.length >= 1 && notes.length <= 4 && notes.every((l) => l.startsWith('Note: ')), notes.join(' | '));
   add('uses the current labels (no "Risk:", "Estimated usage", or "Configured context limit")', !/^(Risk:|Estimated usage|Configured context limit|Estimated visible context)/m.test(text));
 
+  // Model resolution line
+  if (exp.modelLine) add('model line states how the model was resolved', lines[3] === exp.modelLine, `got "${lines[3]}"`);
+  add('a user-supplied model is never called detected', !/\bdetected\b|auto-?detected|automatically (identified|detected)/i.test(lines[3] || ''));
+
   // Bar
-  const barM = BAR_RE.exec(lines[3] || '');
-  add('progress bar line is well-formed (20 cells, "of planning limit")', barM, lines[3]);
+  const barM = BAR_RE.exec(lines[4] || '');
+  add('progress bar line is well-formed (20 cells, "of planning limit")', barM, lines[4]);
   if (barM) {
     const shownText = barM[2];
     const shown = shownText === '<1%' ? 0.5 : Number(shownText.replace(/[~%]/g, ''));
     const filled = [...barM[1]].filter((c) => c === '█' || c === '#').length;
     add('bar fill matches the displayed percentage (±1 block)', Math.abs(filled - barFill(shown)) <= 1, `${filled} blocks for ${shownText}`);
     if (exp.usageDisplay) add(`share display is ${exp.usageDisplay}`, shownText === exp.usageDisplay, shownText);
-    if (exp.usageOver100) add('full bar with percentage above 100% preserved', filled === 20 && shown > 100, lines[3]);
+    if (exp.usageOver100) add('full bar with percentage above 100% preserved', filled === 20 && shown > 100, lines[4]);
   }
 
   // Planning risk and recommendation
-  const riskM = RISK_RE.exec(lines[4] || '');
-  const riskText = riskM ? lines[4].replace(/^Planning risk: /, '') : null;
+  const riskM = RISK_RE.exec(lines[5] || '');
+  const riskText = riskM ? lines[5].replace(/^Planning risk: /, '') : null;
   add(`planning risk is ${exp.risk}`, riskText === exp.risk, `got ${riskText}`);
-  const rec = lines[6] || '';
+  const rec = lines[7] || '';
   if (exp.incomplete) {
     add('UNKNOWN planning risk with a stated reason', riskM && riskM[1] === 'UNKNOWN' && Boolean(riskM[2]));
     if (exp.incomplete === 'baseline') {
-      add('unknown window alone gives the neutral recommendation, with no handoff advice', rec === NEUTRAL_RECOMMENDATION && !/\/handoff/i.test(text), rec);
+      add('unknown model state gives its own recommendation, with no handoff advice', Boolean(exp.recommendation) && rec === exp.recommendation && !/\/handoff/i.test(text), rec);
     } else {
-      add('recommendation names what is not counted', UNKNOWN_REC_RE.test(rec), rec);
+      add('recommendation names what is not counted', PARTIAL_REC_RE.test(rec), rec);
     }
   } else {
     add('recommendation matches planning-risk policy', riskM && rec === RECOMMENDATIONS[riskM[1]], rec);
   }
   if (exp.recommendation) add('recommendation matches expected wording', rec === exp.recommendation, `expected "${exp.recommendation}"`);
   add('never uses "lower bound" wording', !/lower bound/i.test(text));
+  add('never says limit=N reveals the real window', !/limit=N[^.]*(reveal|actual window is)/i.test(text));
 
   // Planning limit and provenance
   const limitVal = (lines[2] || '').replace(/^Planning limit: /, '');

@@ -147,7 +147,8 @@ test('an intentionally pinned budget stays stable across model switches and keep
     const out = renderFor(60000, lim);
     assert.match(out, /Planning limit: 200k \(saved user budget\)/);
     assert.match(out, /Visible-text share of your planning budget; the real model window and backend usage are unknown\./);
-    assert.doesNotMatch(out, /documented|Sol|Luna|capacity/i);
+    assert.doesNotMatch(out, /documented GPT|capacity|500k/i);
+    assert.doesNotMatch(out.split('\n').filter((l) => !l.startsWith('Model:')).join('\n'), /Sol|Luna/);
   }
 });
 
@@ -173,12 +174,13 @@ test('partial coverage stays UNKNOWN under either denominator and under a user b
 });
 
 test('unknown-model fallback: UNKNOWN, no threshold label, no reassurance, and no handoff advice from the unknown window alone', () => {
-  const NEUTRAL = 'A model-relative handoff assessment is unavailable. To compare against a planning limit, invoke this skill again with the parameter in the same message, e.g. `@contextestimate limit=250000` or `@contextestimate model=MODEL_ID`.';
-  assert.equal(p.NEUTRAL_RECOMMENDATION, NEUTRAL);
+  const NEUTRAL = p.MODEL_RECOMMENDATIONS.none;
+  assert.match(NEUTRAL, /^A model-relative handoff assessment is unavailable because the model window is unknown\./);
   for (let tokens = 0; tokens <= 400000; tokens += 2500) {
     const out = renderFor(tokens, BASELINE);
+    assert.match(out, /^Model: not identified \(no trusted runtime metadata and no model=\)$/m, `${tokens}`);
     assert.match(out, /^Planning risk: UNKNOWN \(model window unknown\)$/m, `${tokens}`);
-    assert.match(out, new RegExp(`^Recommendation:\\n${NEUTRAL.replace(/[.?]/g, '\\$&')}$`, 'm'), `${tokens}`);
+    assert.ok(out.includes(`Recommendation:\n${NEUTRAL}`), `${tokens}`);
     assert.doesNotMatch(out, /Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)|Continue normally|Continue, but/);
     assert.doesNotMatch(out, /\/handoff|prudent|near (a|the) limit/i, `${tokens}: no handoff advice from an unknown window alone`);
     assert.match(out, /^Note: Visible-text estimate against a conservative baseline; the model window and backend usage are unknown\.$/m, `${tokens}: never the over-limit note`);
