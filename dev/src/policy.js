@@ -5,8 +5,9 @@
 // report layout. Used by the tests to pin down the documented policy; the
 // skill does not execute this code inside ChatGPT.
 
-// Conservative planning baseline used only when no budget and no documented
-// model window applies. It is not a claim about any model's real window.
+// Default heuristic planning budget, used when there is no user budget and no
+// documented Work window for the current model. It is a planning assumption,
+// not a documented (or universally conservative) model window.
 const DEFAULT_LIMIT = 128000;
 const DEFAULT_THRESHOLDS = { medium: 50, high: 70, critical: 90 };
 
@@ -55,12 +56,19 @@ const BAR_STYLES = {
   ascii: { fill: '#', empty: '.' },
 };
 
+// Planning-budget labels. The internal source key for the default is
+// 'baseline'; its label is "default heuristic".
 const LIMIT_LABELS = {
-  override: 'user override',
+  override: 'user budget',
   saved: 'saved user budget',
-  baseline: 'conservative baseline; model window unknown',
+  baseline: 'default heuristic',
 };
+const documentedLabel = (entry) => `documented ${entry.name} Work window, checked ${entry.checked}`;
+const liveLabel = (name) => `${name} Work window, live check`;
 
+// Handoff priority -> recommendation. These thresholds (50/70/90 % of the
+// planning budget) are handoff-planning policy, not measured model-capacity
+// limits.
 const RECOMMENDATIONS = {
   LOW: 'Continue normally.',
   MEDIUM: 'Continue, but plan a /handoff before a long task.',
@@ -69,9 +77,9 @@ const RECOMMENDATIONS = {
   UNKNOWN: 'If this chat feels long, consider /handoff before substantial work.',
 };
 
-// Used when planning risk is UNKNOWN because history is partial or attachments
-// are unmeasured (an explicit reason to consider a handoff). The base is
-// escalated by the counted share only for a known planning limit.
+// Used when coverage is incomplete (partial history or unmeasured attachments):
+// never an unqualified LOW. The base escalates with the counted share of the
+// planning budget, whatever its source.
 const INCOMPLETE_SUFFIX = {
   partial: 'earlier history is not counted',
   unmeasured: 'attachments or images are not counted',
@@ -84,33 +92,11 @@ const INCOMPLETE_BASE = {
   CRITICAL: 'Run /handoff now before continuing substantial work',
 };
 
-// An unknown model window is not, by itself, a reason to hand off. Each
-// resolution state says what is actually known and offers only what can help.
-// `limit=N` is the user's own planning budget; it never reveals a model's real
-// window.
-const BUDGET_EXAMPLE = '`@contextestimate limit=250000`';
-const MODEL_RECOMMENDATIONS = {
-  none: `A model-relative handoff assessment is unavailable because the model window is unknown. For a planning comparison, invoke this skill again with \`limit=N\` in the same message, e.g. ${BUDGET_EXAMPLE}.`,
-  undocumented: (name) =>
-    `${name} was recognized, but no ChatGPT Work context window is documented, so a model-relative handoff assessment is unavailable. For a planning comparison, invoke this skill again with your own budget in the same message, e.g. ${BUDGET_EXAMPLE} (a planning figure, not the model's actual window).`,
-  unrecognized: `The model name was not recognized, so a model-relative handoff assessment is unavailable. Invoke this skill again with a clearer model name in the same message, or a budget such as ${BUDGET_EXAMPLE}.`,
-  ambiguous: (list) =>
-    `The model name is ambiguous or incomplete (could be ${list}), so a model-relative handoff assessment is unavailable. Invoke this skill again with the full model name in the same message, or a budget such as ${BUDGET_EXAMPLE}.`,
-};
-// Planning-risk reason shown for each model state when the baseline is the only limit.
-const MODEL_REASONS = {
-  none: 'model window unknown',
-  stale: 'model window unknown',
-  undocumented: 'model window not documented',
-  unrecognized: 'model not recognized',
-  ambiguous: 'model ambiguous',
-};
-
 const NOTES = {
-  budget: 'Note: Visible-text share of your planning budget; the real model window and backend usage are unknown.',
-  documented: 'Note: Visible-text estimate against the documented window; backend usage is unknown.',
-  baseline: 'Note: Visible-text estimate against a conservative baseline; the model window and backend usage are unknown.',
-  over: 'Note: Visible text exceeds the planning limit; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see.',
+  budget: 'Note: Guidance uses your planning budget; actual model capacity and backend usage are unknown.',
+  documented: 'Note: Guidance uses the documented Work window as the planning budget; backend usage and remaining capacity are unknown.',
+  baseline: 'Note: Guidance uses a heuristic planning budget; actual model capacity and backend usage are unknown.',
+  over: 'Note: Visible text exceeds the planning budget; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see.',
   partial: "Note: Counts visible text only, not ChatGPT's backend token usage or internal compaction; earlier history is summarized or truncated, so actual usage may be higher or lower.",
   unmeasured: "Note: Counts visible text only, not ChatGPT's backend token usage; attachments or images were not counted, so actual usage may differ.",
   both: "Note: Counts visible text only, not ChatGPT's backend token usage or internal compaction; earlier history is summarized or truncated and attachments or images were not counted, so actual usage may be higher or lower.",
@@ -122,10 +108,10 @@ const staleNote = (name) =>
   `Note: The registry entry for ${name} is older than 90 days and was not rechecked, so its window is treated as unknown.`;
 const transcriptNote = (tokenizer) =>
   `Note: Counts the supplied text with ${tokenizer}; it may not match any Work model's tokenizer or the active context.`;
-// Targeted lookup outcomes (explicit model= for a model with no documented Work window).
+// Targeted lookup outcomes. 'none-found' only when a search tool was actually used.
 const lookupNote = {
-  'none-found': (name) => `Note: Searched official OpenAI sources for ${name}; no ChatGPT Work context window was found.`,
-  unavailable: (name) => `Note: Search is unavailable here, so ${name}'s Work window stays unknown.`,
+  'none-found': (name) => `Note: An official-source search found no ChatGPT Work window for ${name}.`,
+  unavailable: (name) => `Note: No search tool was available, so ${name}'s Work window was not looked up.`,
 };
 
 function isValidLimit(raw) {
@@ -294,9 +280,9 @@ function resolveModel(args = {}) {
   return id ? { id, source: info.source === 'runtime' ? 'runtime' : 'user' } : null;
 }
 
-// Planning-limit precedence: valid limit=N; valid saved_limit; documented Work
+// Planning-budget precedence: valid limit=N; valid saved_limit; documented Work
 // window for the currently evidenced model (registry, or a lookup result that
-// passes the Work-scope rules); conservative baseline. `saved` is the
+// passes the Work-scope rules); the default heuristic budget. `saved` is the
 // `saved_limit` value from the skill configuration ("none" or digits). Derived
 // limits are never written back to saved_limit. The returned object also
 // carries a non-enumerable `modelInfo` used for the report's Model line.
@@ -319,13 +305,13 @@ function resolveLimit(invocation, saved, runtime, { live, today } = {}) {
     const stale = isStale(entry, today);
     if (entry.window && !stale) {
       return attach(
-        { value: entry.window, source: 'documented', via: 'registry', label: `documented ${entry.name} / Work default`, model: modelId(info), modelSource: info.source === 'runtime' ? 'runtime' : 'user' },
+        { value: entry.window, source: 'documented', via: 'registry', label: documentedLabel(entry), model: modelId(info), modelSource: info.source === 'runtime' ? 'runtime' : 'user' },
         'documented',
       );
     }
     if (live && acceptLiveResult(live, info.raw).ok) {
       return attach(
-        { value: live.window, source: 'documented', via: 'live', label: `documented ${live.name || entry.name} / Work default; live check`, model: modelId(info), modelSource: info.source === 'runtime' ? 'runtime' : 'user' },
+        { value: live.window, source: 'documented', via: 'live', label: liveLabel(live.name || entry.name), model: modelId(info), modelSource: info.source === 'runtime' ? 'runtime' : 'user' },
         'live',
       );
     }
@@ -335,7 +321,7 @@ function resolveLimit(invocation, saved, runtime, { live, today } = {}) {
   }
   if (r && r.state === 'unrecognized' && live && acceptLiveResult(live, info.raw).ok) {
     return attach(
-      { value: live.window, source: 'documented', via: 'live', label: `documented ${live.name || info.raw} / Work default; live check`, model: modelId(info), modelSource: info.source === 'runtime' ? 'runtime' : 'user' },
+      { value: live.window, source: 'documented', via: 'live', label: liveLabel(live.name || info.raw), model: modelId(info), modelSource: info.source === 'runtime' ? 'runtime' : 'user' },
       'live',
     );
   }
@@ -425,18 +411,19 @@ function classify(usage, t = DEFAULT_THRESHOLDS) {
   return 'LOW';
 }
 
-// Planning risk compares visible text with the planning limit. It is UNKNOWN
-// whenever coverage is incomplete or the only denominator is the baseline (the
-// reason says which model state applies). It is never a measure of backend
-// context risk. `modelState` is none | recognized-variants | ambiguous | ...
-function planningRisk(usage, { compacted, unmeasured, source, modelState = 'none' }, t = DEFAULT_THRESHOLDS) {
+// Handoff priority compares visible text with the planning budget using the
+// 50/70/90 policy thresholds. It is UNKNOWN only when coverage is incomplete
+// (partial history, unmeasured attachments). An unknown or undocumented model
+// window does not make it UNKNOWN: the default heuristic budget is used. It is
+// never a measure of backend usage or remaining model capacity.
+function handoffPriority(usage, { compacted, unmeasured }, t = DEFAULT_THRESHOLDS) {
   const reasons = [];
   if (compacted) reasons.push('partial history');
   if (unmeasured) reasons.push('unmeasured attachments');
-  if (source === 'baseline') reasons.push(MODEL_REASONS[modelState] || MODEL_REASONS.none);
   if (reasons.length > 0) return { level: 'UNKNOWN', reasons };
   return { level: classify(usage, t), reasons: [] };
 }
+const planningRisk = handoffPriority; // former name
 
 function formatTokens(tokens) {
   if (tokens < 1000) return '<1k';
@@ -479,48 +466,33 @@ function displayName(info) {
   return `"${raw}"`;
 }
 
-// The report's Model line: where the model came from, and what is known about
-// it. A user-supplied name is always "supplied by you with model=", never
-// "detected".
+// The report's Model line: the name, where it came from (runtime metadata or a
+// user-supplied model= value; never "detected"), and what is known about its
+// Work window. One line, no advice.
 function modelLine(info, limitState) {
-  if (!info || info.source === 'none') return 'Model: not identified (no trusted runtime metadata and no model=)';
-  const from = info.source === 'runtime' ? 'from trusted runtime metadata' : 'supplied by you with model=';
+  if (!info || info.source === 'none') return 'Model: not identified';
+  const from = info.source === 'runtime' ? 'runtime metadata' : 'user-supplied';
   const r = info.resolution;
   const name = displayName(info);
   if (r.state === 'recognized') {
     const tail =
-      limitState === 'documented' ? 'recognized; Work window documented'
-      : limitState === 'live' ? 'recognized; Work window found by a live check'
-      : limitState === 'stale' ? 'recognized; registry window older than 90 days, not rechecked'
-      : 'recognized; no ChatGPT Work window documented';
-    return `Model: ${name} (${from}; ${tail})`;
+      limitState === 'documented' ? 'Work window documented'
+      : limitState === 'live' ? 'Work window from live check'
+      : limitState === 'stale' ? 'registry window not rechecked in 90+ days'
+      : 'Work window undocumented';
+    return `Model: ${name} (${from}) — ${tail}`;
   }
   if (r.state === 'ambiguous') {
-    const shown = r.candidates.slice(0, 3).join(', ') + (r.candidates.length > 3 ? `, and ${r.candidates.length - 3} more` : '');
-    return `Model: ${name} (${from}; ambiguous or incomplete, could be ${shown})`;
+    const shown = r.candidates.slice(0, 3).join(', ') + (r.candidates.length > 3 ? `, +${r.candidates.length - 3} more` : '');
+    return `Model: ${name} (${from}) — ambiguous: ${shown}`;
   }
-  return `Model: ${name} (${from}; not recognized, not in the Work model registry)`;
+  return `Model: ${name} (${from}) — not in the Work model registry`;
 }
 
-// The recommendation for an UNKNOWN planning risk, by cause.
-// - Missing history or unmeasured attachments are explicit reasons to consider a
-//   handoff. The base escalates with the counted share only for a known planning
-//   limit (override, saved, documented); against the baseline the share is not a
-//   reliable threshold comparison, so the base stays at "consider".
-// - Otherwise the model state decides: the report says what is unknown and
-//   offers only what can help, with no handoff advice from the unknown alone.
-function incompleteRecommendation(usage, { compacted, unmeasured, source, modelState = 'none', info, staleModel }, t = DEFAULT_THRESHOLDS) {
-  if (compacted || unmeasured) {
-    const base = source === 'baseline' ? INCOMPLETE_BASE.LOW : INCOMPLETE_BASE[classify(usage, t)];
-    return `${base}; ${INCOMPLETE_SUFFIX[compacted ? (unmeasured ? 'both' : 'partial') : 'unmeasured']}.`;
-  }
-  const r = info && info.resolution;
-  if (modelState === 'undocumented') return MODEL_RECOMMENDATIONS.undocumented(r.entry.name);
-  if (modelState === 'unrecognized') return MODEL_RECOMMENDATIONS.unrecognized;
-  if (modelState === 'ambiguous') {
-    return MODEL_RECOMMENDATIONS.ambiguous(r.candidates.slice(0, 3).join(', ') + (r.candidates.length > 3 ? `, and ${r.candidates.length - 3} more` : ''));
-  }
-  return MODEL_RECOMMENDATIONS.none;
+// Recommendation when coverage is incomplete: a continuity checkpoint
+// (handoff) before substantial work, escalated by the counted share.
+function incompleteRecommendation(usage, { compacted, unmeasured }, t = DEFAULT_THRESHOLDS) {
+  return `${INCOMPLETE_BASE[classify(usage, t)]}; ${INCOMPLETE_SUFFIX[compacted ? (unmeasured ? 'both' : 'partial') : 'unmeasured']}.`;
 }
 
 // state: {
@@ -534,9 +506,8 @@ function render(state) {
   const t = state.thresholds || DEFAULT_THRESHOLDS;
   const style = state.barStyle || 'unicode';
   const info = state.limit.modelInfo || { source: 'none', state: 'none' };
-  const modelState = info.state || 'none';
-  const limitLine = `Planning limit: ${formatLimit(state.limit.value)} (${state.limit.label})`;
-  const modelText = modelLine(info, modelState);
+  const budgetLine = `Planning budget: ${formatLimit(state.limit.value)} (${state.limit.label})`;
+  const modelText = modelLine(info, info.state || 'none');
   const lines = ['Context Estimate'];
   const extraNotes = [];
   if (state.invalidLimitRaw !== undefined) extraNotes.push(`Note: Ignored invalid limit "${state.invalidLimitRaw}".`);
@@ -548,19 +519,19 @@ function render(state) {
   const finish = (primaryNote) => [...lines, '', primaryNote, ...extraNotes].join('\n');
 
   if (state.kind === 'unavailable') {
-    lines.push('Estimated accessible text: Unavailable', limitLine, modelText, '');
-    lines.push('Planning risk: UNKNOWN', 'Recommendation:', RECOMMENDATIONS.UNKNOWN);
+    lines.push('Estimated accessible text: Unavailable', budgetLine, modelText);
+    lines.push('Handoff priority: UNKNOWN (no defensible text estimate)', '', 'Recommendation:', RECOMMENDATIONS.UNKNOWN);
     return finish(NOTES.unavailable);
   }
 
   // Genuine platform telemetry only: measured usage and its limit, same scope.
   if (state.kind === 'host') {
     const usage = usagePercent(state.tokens, state.hostLimit);
-    const risk = classify(usage, t);
+    const level = classify(usage, t);
     lines.push(`Measured context: ${state.tokens.toLocaleString('en-US')} tokens (host-reported)`);
     lines.push(`Context limit: ${formatLimit(state.hostLimit)} (host-reported)`);
-    lines.push(`${bar(usage, style)} ${formatPercent(usage)} of context limit (host-reported)`, '');
-    lines.push(`Context risk: ${risk} (host-reported)`, 'Recommendation:', RECOMMENDATIONS[risk]);
+    lines.push(`${bar(usage, style)} ${formatPercent(usage)} of context limit (host-reported)`);
+    lines.push(`Handoff priority: ${level} (host-reported usage)`, '', 'Recommendation:', RECOMMENDATIONS[level]);
     return finish(NOTES.host);
   }
 
@@ -574,25 +545,20 @@ function render(state) {
   } else {
     lines.push(`Estimated accessible text: ${formatTokens(state.tokens)} tokens${suffix}`);
   }
-  lines.push(limitLine, modelText);
-  lines.push(`${bar(usage, style)} ${pct} of planning limit${suffix}`, '');
+  lines.push(budgetLine, modelText, `${bar(usage, style)} ${pct} of planning budget${suffix}`);
 
-  const flags = { compacted: state.compacted, unmeasured: state.unmeasured, source: state.limit.source, modelState };
-  const risk = planningRisk(usage, flags, t);
-  if (risk.level === 'UNKNOWN') {
-    lines.push(`Planning risk: UNKNOWN (${risk.reasons.join('; ')})`, 'Recommendation:');
-    lines.push(incompleteRecommendation(usage, { ...flags, info, staleModel: state.limit.staleModel }, t));
+  const priority = handoffPriority(usage, { compacted: state.compacted, unmeasured: state.unmeasured }, t);
+  if (priority.level === 'UNKNOWN') {
+    lines.push(`Handoff priority: UNKNOWN (${priority.reasons.join('; ')})`, '', 'Recommendation:');
+    lines.push(incompleteRecommendation(usage, { compacted: state.compacted, unmeasured: state.unmeasured }, t));
   } else {
-    lines.push(`Planning risk: ${risk.level}`, 'Recommendation:', RECOMMENDATIONS[risk.level]);
+    lines.push(`Handoff priority: ${priority.level}`, '', 'Recommendation:', RECOMMENDATIONS[priority.level]);
   }
 
   if (incomplete) return finish(NOTES[incomplete]);
   if (state.kind === 'transcript') return finish(transcriptNote(state.tokenizer));
-  // Against the baseline the share is only a labeled comparison, so it never
-  // gets the over-limit note.
-  if (state.limit.source === 'baseline') return finish(NOTES.baseline);
   if (usage >= 100) return finish(NOTES.over);
-  return finish(state.limit.source === 'documented' ? NOTES.documented : NOTES.budget);
+  return finish(state.limit.source === 'documented' ? NOTES.documented : state.limit.source === 'baseline' ? NOTES.baseline : NOTES.budget);
 }
 
 module.exports = {
@@ -626,8 +592,6 @@ module.exports = {
   RECOMMENDATIONS,
   INCOMPLETE_BASE,
   INCOMPLETE_SUFFIX,
-  MODEL_RECOMMENDATIONS,
-  MODEL_REASONS,
   NOTES,
   transcriptNote,
   isValidLimit,
@@ -638,6 +602,9 @@ module.exports = {
   usagePercent,
   classify,
   planningRisk,
+  handoffPriority,
+  documentedLabel,
+  liveLabel,
   formatTokens,
   formatLimit,
   formatPercent,

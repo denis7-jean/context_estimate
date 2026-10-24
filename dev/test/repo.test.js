@@ -32,38 +32,52 @@ test('.gitignore excludes dependencies, logs, and local eval outputs', () => {
 test('README example blocks equal the reference renderer output', () => {
   const blocks = [...read('README.md').matchAll(/```\n(Context Estimate\n[\s\S]*?)\n```/g)].map((m) => m[1]);
   assert.equal(blocks.length, 4);
-  assert.equal(blocks[0], renderFor(130000, SOL));
-  assert.equal(blocks[1], renderFor(130000, BASELINE));
-  assert.equal(blocks[2], renderFor(50000, limitFor('/contextestimate model= GPT-6 Sol')));
+  assert.equal(blocks[0], renderFor(5000, limitFor('/contextestimate model= GPT-6 Sol')));
+  assert.equal(blocks[1], renderFor(130000, SOL));
+  assert.equal(blocks[2], renderFor(100000, BASELINE));
   assert.equal(blocks[3], renderFor(130000, SOL, { compacted: true }));
-  assert.match(blocks[0], /Planning risk: LOW/);
-  assert.match(blocks[1], /~102% of planning limit/);
-  assert.match(blocks[1], /Planning risk: UNKNOWN \(model window unknown\)/);
-  assert.match(blocks[2], /^Model: GPT-6 Sol \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
-  assert.match(blocks[2], /Planning risk: UNKNOWN \(model window not documented\)/);
-  assert.doesNotMatch(blocks[2], /model=MODEL_ID/);
-  assert.match(blocks[3], /Planning risk: UNKNOWN \(partial history\)/);
-  for (const b of blocks) assert.doesNotMatch(b, /lower bound|Estimated usage|Configured context limit/i);
+  // An undocumented window gets ordinary guidance against the labeled default budget.
+  assert.match(blocks[0], /^Planning budget: 128k \(default heuristic\)$/m);
+  assert.match(blocks[0], /^Model: GPT-6 Sol \(user-supplied\) — Work window undocumented$/m);
+  assert.match(blocks[0], /^Handoff priority: LOW\n\nRecommendation:\nContinue normally\.$/m);
+  assert.match(blocks[1], /Handoff priority: LOW/);
+  assert.match(blocks[2], /~78% of planning budget/);
+  assert.match(blocks[2], /^Handoff priority: HIGH$/m);
+  assert.match(blocks[3], /Handoff priority: UNKNOWN \(partial history\)/);
+  for (const b of blocks) assert.doesNotMatch(b, /lower bound|Estimated usage|Configured context limit|model-relative|unavailable|model=MODEL_ID|conservative/i);
 });
 
 test('README documents precedence, model evidence, the official source, and the lack of a cross-model guarantee', () => {
   const r = read('README.md');
-  const rows = ['`user override`', '`saved user budget`', '`documented GPT-6.1 Sol / Work default`', '`conservative baseline; model window unknown`'].map((l) => r.indexOf(l));
+  const rows = ['`user budget`', '`saved user budget`', '`documented GPT-6.1 Sol Work window, checked 2026-10-23`', '`default heuristic`'].map((l) => r.indexOf(l));
   assert.ok(rows.every((i) => i > 0) && rows.every((v, i) => i === 0 || v > rows[i - 1]), String(rows));
   assert.ok(r.includes(p.DOCUMENTED_SOURCE.url));
   assert.match(r, /wording checked on 2026-10-23/);
   assert.match(r, /GPT-6\.1 Sol: 500,000 tokens in ChatGPT Work and Codex/);
   assert.match(r, /`model=gpt-6\.1-sol` is \*\*your assertion\*\* of the Work model you selected, not automatic detection/);
   assert.match(r, /Model evidence is re-checked on every invocation/);
-  assert.match(r, /never reuses an earlier derived limit/);
+  assert.match(r, /never reuses an earlier derived budget/);
   assert.match(r, /never saved into `saved_limit`/);
   assert.match(r, /not the model's actual capacity/);
   assert.match(r, /no table of other models' windows\*\*, and no accuracy guarantee across models/);
   assert.match(r, /isn't a promise that all of it is available for conversation text/);
   assert.match(r, /@contextestimate model=gpt-6\.1-sol/);
-  assert.match(r, /@contextestimate limit=200000/);
+  assert.match(r, /@contextestimate limit=250000/);
   assert.match(r, /upload the new ZIP again/);
-  assert.match(r, /planning guidance, not measured backend context risk/);
+  // The default budget is labeled as a heuristic and the priority as planning policy.
+  assert.match(r, /128k is not documented for any Work model and is not guaranteed to be conservative/);
+  assert.match(r, /These thresholds are handoff-planning policy, not validated model-capacity limits, and the priority is not measured backend context risk/);
+  assert.match(r, /an unknown model window never makes it `UNKNOWN`/);
+});
+
+test('README documents the deliberate policy change and the label renames', () => {
+  const r = read('README.md');
+  assert.match(r, /### Policy change: guidance with an undocumented window/);
+  assert.match(r, /This version deliberately changes that/);
+  assert.match(r, /`Planning risk` → `Handoff priority`/);
+  assert.match(r, /`conservative baseline` → `default heuristic`/);
+  assert.match(r, /The coverage safeguards are unchanged/);
+  assert.match(r, /Switching between two undocumented models gives the same default budget and the same guidance/);
 });
 
 test('README documents Work as supported and Chat as an observed account limit, without overclaiming', () => {
@@ -73,7 +87,7 @@ test('README documents Work as supported and Chat as an observed account limit, 
   assert.match(r, /observed availability limit on one account, not a statement about OpenAI's products in general/);
   assert.match(r, /does not read ChatGPT's hidden context meter/);
   assert.match(r, /never runs `\/handoff`/);
-  assert.match(r, /the actual model window, backend token usage, and internal compaction, which it cannot see/);
+  assert.match(r, /Four things are kept separate: \(1\) the accessible text it estimates, \(2\) the planning budget used for the bar and the guidance, \(3\) the model's documented ChatGPT Work window, if OpenAI documents one, and \(4\) actual backend usage and remaining capacity, which it cannot see/);
   assert.match(r, /Plugins → Skills → Create → Upload from your computer/);
   assert.match(r, /not a documented ChatGPT slash command/);
   assert.doesNotMatch(r, /fully tested in ChatGPT/i);
@@ -142,22 +156,24 @@ test('publishable tree has only the expected top-level entries and no large arti
   assert.deepEqual(fs.readdirSync(path.join(ROOT, 'dist')), ['contextestimate.zip']);
 });
 
-test('README and notes document the greeting smoke test, the neutral baseline recommendation, and switch variability', () => {
+test('README and notes document the greeting smoke test, the default-budget policy change, and switch variability', () => {
   const r = read('README.md');
   const d = read('docs/development-notes.md');
   for (const doc of [r, d]) {
     assert.match(doc, /GPT-6 Luna Medium/);
     assert.match(doc, /GPT-6\.1 Sol Medium/);
     assert.match(doc, /Hello, world! 👋/);
-    assert.match(doc, /a model-relative handoff assessment is unavailable/i);
     assert.match(doc, /estimation variability or differences in the accessible history/);
     assert.match(doc, /not measurements of backend context usage/);
+    assert.match(doc, /default heuristic/);
   }
-  assert.match(r, /An unknown window never triggers a handoff recommendation by itself/);
+  assert.match(r, /has not been uploaded or run in ChatGPT Work/);
+  assert.match(d, /## Policy change: default-budget guidance/);
   assert.match(d, /sizing sanity|synthetic fixture/);
   assert.match(d, /Neither live number is ground truth/);
   assert.match(d, /do not show that a language model produces a deterministic exact count in a live invocation/i);
+  // The greeting-sized chat on an undocumented model now gets ordinary LOW guidance.
   const blocks = [...r.matchAll(/```\n(Context Estimate\n[\s\S]*?)\n```/g)].map((m) => m[1]);
-  assert.ok(blocks[1].includes(p.MODEL_RECOMMENDATIONS.none));
-  assert.doesNotMatch(blocks[1], /\/handoff/);
+  assert.ok(blocks[0].includes(p.RECOMMENDATIONS.LOW));
+  assert.doesNotMatch(blocks[0], /\/handoff/);
 });

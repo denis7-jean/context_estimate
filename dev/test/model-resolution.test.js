@@ -28,7 +28,7 @@ const lineStarting = (out, prefix) => out.split('\n').find((l) => l.startsWith(p
 
 // ---- the observed input ----
 
-test('observed: "/contextestimate model= GPT-6 Sol" is parsed, recognized, and reported as recognized with no documented Work window', () => {
+test('observed: "/contextestimate model= GPT-6 Sol" is parsed, recognized, reported as Work window undocumented, and gets ordinary default-budget guidance', () => {
   const inv = p.parseInvocation('/contextestimate model= GPT-6 Sol');
   assert.equal(inv.model.status, 'asserted');
   assert.equal(inv.model.raw, 'GPT-6 Sol');
@@ -37,18 +37,14 @@ test('observed: "/contextestimate model= GPT-6 Sol" is parsed, recognized, and r
   assert.equal(inv.model.resolution.entry.name, 'GPT-6 Sol');
 
   const out = report('/contextestimate model= GPT-6 Sol');
-  assert.match(out, /^Planning limit: 128k \(conservative baseline; model window unknown\)$/m);
-  assert.match(out, /^Model: GPT-6 Sol \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
-  assert.match(out, /^Planning risk: UNKNOWN \(model window not documented\)$/m);
-  assert.ok(out.includes(`Recommendation:\n${p.MODEL_RECOMMENDATIONS.undocumented('GPT-6 Sol')}`));
-  // Only limit=N is offered: the user is not asked to repeat model=...
-  assert.doesNotMatch(out, /model=MODEL_ID|repeat|again with .*model=/i);
-  assert.match(out, /`@contextestimate limit=250000`/);
-  assert.match(out, /a planning figure, not the model's actual window/);
-  assert.doesNotMatch(out, /\/handoff|Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)|documented GPT/);
+  assert.match(out, /^Planning budget: 128k \(default heuristic\)$/m);
+  assert.match(out, /^Model: GPT-6 Sol \(user-supplied\) — Work window undocumented$/m);
+  assert.match(out, /^Handoff priority: LOW$/m);
+  assert.ok(out.includes('Recommendation:\nContinue normally.'));
+  assert.match(out, /^Note: Guidance uses a heuristic planning budget; actual model capacity and backend usage are unknown\.$/m);
+  // No request to configure anything, and the undocumented window does not block guidance.
+  assert.doesNotMatch(out, /model=MODEL_ID|limit=N|model-relative|unavailable|UNKNOWN|documented GPT/);
 });
-
-// ---- parsing ----
 
 test('model= accepts whitespace around "=", multiword display names, and the rest of the line', () => {
   for (const msg of ['/contextestimate model= GPT-6 Sol', '/contextestimate model =GPT-6 Sol', '/contextestimate model = GPT-6 Sol', '/contextestimate model=   GPT-6 Sol   ', '@contextestimate model= GPT-6 Sol']) {
@@ -140,7 +136,7 @@ test('unknown names are unrecognized: real models outside the Work registry, ext
 
 // ---- distinct output for every resolution state ----
 
-test('every resolution state has distinct Model-line, risk-reason, and recommendation wording', () => {
+test('every resolution state has a distinct Model line, and none of them blocks or changes the guidance', () => {
   const runtimeSol = { id: 'GPT-6.1 Sol', surface: 'work' };
   const runtimeLuna = { id: 'gpt-6-luna', surface: 'work' };
   const states = {
@@ -154,69 +150,54 @@ test('every resolution state has distinct Model-line, risk-reason, and recommend
   };
   const lines = Object.fromEntries(Object.entries(states).map(([k, v]) => [k, lineStarting(v, 'Model:')]));
   assert.equal(new Set(Object.values(lines)).size, 7, JSON.stringify(lines, null, 1));
-  assert.equal(lines.none, 'Model: not identified (no trusted runtime metadata and no model=)');
-  assert.equal(lines['runtime documented'], 'Model: GPT-6.1 Sol (from trusted runtime metadata; recognized; Work window documented)');
-  assert.equal(lines['runtime undocumented'], 'Model: GPT-6 Luna (from trusted runtime metadata; recognized; no ChatGPT Work window documented)');
-  assert.equal(lines['user documented'], 'Model: GPT-6.1 Sol (supplied by you with model=; recognized; Work window documented)');
-  assert.equal(lines['user undocumented'], 'Model: GPT-6 Luna (supplied by you with model=; recognized; no ChatGPT Work window documented)');
-  assert.equal(lines['user unrecognized'], 'Model: "GPT-7 Foo" (supplied by you with model=; not recognized, not in the Work model registry)');
-  assert.equal(lines['user ambiguous'], 'Model: "Sol" (supplied by you with model=; ambiguous or incomplete, could be GPT-6.1 Sol, GPT-6 Sol, GPT-5.6 Sol)');
+  assert.equal(lines.none, 'Model: not identified');
+  assert.equal(lines['runtime documented'], 'Model: GPT-6.1 Sol (runtime metadata) — Work window documented');
+  assert.equal(lines['runtime undocumented'], 'Model: GPT-6 Luna (runtime metadata) — Work window undocumented');
+  assert.equal(lines['user documented'], 'Model: GPT-6.1 Sol (user-supplied) — Work window documented');
+  assert.equal(lines['user undocumented'], 'Model: GPT-6 Luna (user-supplied) — Work window undocumented');
+  assert.equal(lines['user unrecognized'], 'Model: "GPT-7 Foo" (user-supplied) — not in the Work model registry');
+  assert.equal(lines['user ambiguous'], 'Model: "Sol" (user-supplied) — ambiguous: GPT-6.1 Sol, GPT-6 Sol, GPT-5.6 Sol');
 
-  const risk = (k) => lineStarting(states[k], 'Planning risk:');
-  assert.equal(risk('none'), 'Planning risk: UNKNOWN (model window unknown)');
-  assert.equal(risk('user undocumented'), 'Planning risk: UNKNOWN (model window not documented)');
-  assert.equal(risk('runtime undocumented'), 'Planning risk: UNKNOWN (model window not documented)');
-  assert.equal(risk('user unrecognized'), 'Planning risk: UNKNOWN (model not recognized)');
-  assert.equal(risk('user ambiguous'), 'Planning risk: UNKNOWN (model ambiguous)');
-  assert.equal(risk('user documented'), 'Planning risk: LOW');
-  assert.equal(risk('runtime documented'), 'Planning risk: LOW');
-
-  const rec = (k) => states[k].split('Recommendation:\n')[1].split('\n')[0];
-  const unknownRecs = ['none', 'user undocumented', 'user unrecognized', 'user ambiguous'].map(rec);
-  assert.equal(new Set(unknownRecs).size, 4, 'four different recommendations');
-  assert.equal(rec('user documented'), 'Continue normally.');
-  assert.equal(rec('runtime undocumented'), p.MODEL_RECOMMENDATIONS.undocumented('GPT-6 Luna'));
-  // None of the unknown states recommends /handoff, and each says what it needs instead.
-  for (const r of unknownRecs) {
-    assert.doesNotMatch(r, /\/handoff|prudent|near (a|the) limit/i);
-    assert.match(r, /a model-relative handoff assessment is unavailable/i);
-    assert.match(r, /same message/);
-    assert.match(r, /`@contextestimate limit=250000`/);
+  // Unknown, ambiguous, unrecognized, or absent identity never blocks guidance: same priority and advice as a known model.
+  for (const [k, out] of Object.entries(states)) {
+    assert.match(out, /^Handoff priority: LOW$/m, k);
+    assert.ok(out.includes('Recommendation:\nContinue normally.'), k);
+    assert.doesNotMatch(out, /UNKNOWN|model-relative|unavailable|limit=N|model=MODEL_ID/, k);
   }
-  assert.match(rec('none'), /the model window is unknown/);
-  assert.doesNotMatch(rec('none'), /model=/, 'no implication that repeating a model name reveals an unpublished value');
-  assert.match(rec('user unrecognized'), /not recognized/);
-  assert.match(rec('user unrecognized'), /clearer model name/);
-  assert.match(rec('user ambiguous'), /ambiguous or incomplete \(could be GPT-6\.1 Sol, GPT-6 Sol, GPT-5\.6 Sol\)/);
-  assert.match(rec('user ambiguous'), /full model name/);
+  // Only the budget source (and its note) differs.
+  assert.match(states['user documented'], /^Planning budget: 500k \(documented GPT-6\.1 Sol Work window, checked 2026-10-23\)$/m);
+  for (const k of ['none', 'runtime undocumented', 'user undocumented', 'user unrecognized', 'user ambiguous']) {
+    assert.match(states[k], /^Planning budget: 128k \(default heuristic\)$/m, k);
+    assert.match(states[k], /^Note: Guidance uses a heuristic planning budget; actual model capacity and backend usage are unknown\.$/m, k);
+  }
 });
 
-test('a user-supplied model name is never described as detected; only runtime metadata is "from trusted runtime metadata"', () => {
+test('a user-supplied model name is never described as detected; only runtime metadata is labeled "runtime metadata"', () => {
   for (const v of ['GPT-6.1 Sol', 'GPT-6 Sol', 'GPT-7 Foo', 'Sol']) {
     const line = lineStarting(report(`/contextestimate model=${v}`), 'Model:');
-    assert.match(line, /supplied by you with model=/, v);
-    assert.doesNotMatch(line, /detect|runtime|automatic|identified automatically/i, v);
+    assert.match(line, /\(user-supplied\)/, v);
+    assert.doesNotMatch(line, /detect|runtime|automatic/i, v);
   }
   // Runtime evidence must name the model and the Work surface.
   for (const runtime of [{ id: 'gpt-6.1-sol' }, { id: 'gpt-6.1-sol', surface: 'chat' }, { id: 'gpt-6.1-sol', surface: 'api' }, { surface: 'work' }]) {
-    assert.match(lineStarting(report('/contextestimate', {}, runtime), 'Model:'), /^Model: not identified/, JSON.stringify(runtime));
+    assert.equal(lineStarting(report('/contextestimate', {}, runtime), 'Model:'), 'Model: not identified', JSON.stringify(runtime));
   }
 });
 
-test('model state does not alter limits, thresholds, or recommendations when a budget or documented window applies', () => {
+test('model state does not alter budgets, thresholds, or recommendations; coverage still governs UNKNOWN', () => {
   const withBudget = report('/contextestimate limit=250000 model=GPT-6 Sol');
-  assert.match(withBudget, /^Planning limit: 250k \(user override\)$/m);
-  assert.match(withBudget, /^Model: GPT-6 Sol \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
-  assert.match(withBudget, /^Planning risk: LOW$/m);
-  assert.doesNotMatch(withBudget, /model-relative/);
+  assert.match(withBudget, /^Planning budget: 250k \(user budget\)$/m);
+  assert.match(withBudget, /^Model: GPT-6 Sol \(user-supplied\) — Work window undocumented$/m);
+  assert.match(withBudget, /^Handoff priority: LOW$/m);
   const unrec = report('/contextestimate limit=250000 model=GPT-7 Foo');
-  assert.match(unrec, /^Planning risk: LOW$/m);
-  assert.match(unrec, /not recognized/);
-  // Partial history keeps its own recommendation and gains the model-state reason.
-  const partial = renderFor(500, resolve('/contextestimate model=GPT-6 Sol'), { compacted: true });
-  assert.match(partial, /^Planning risk: UNKNOWN \(partial history; model window not documented\)$/m);
-  assert.match(partial, /^Consider \/handoff before substantial work; earlier history is not counted\.$/m);
-  assert.match(renderFor(500, resolve('/contextestimate model=GPT-6.1 Sol'), { compacted: true }), /^Planning risk: UNKNOWN \(partial history\)$/m);
+  assert.match(unrec, /^Handoff priority: LOW$/m);
+  assert.match(unrec, /not in the Work model registry/);
+  // Partial history keeps its own UNKNOWN and recommendation whatever the model state.
+  for (const m of ['/contextestimate model=GPT-6 Sol', '/contextestimate model=GPT-6.1 Sol', '/contextestimate model=Sol', '/contextestimate']) {
+    const partial = renderFor(500, resolve(m), { compacted: true });
+    assert.match(partial, /^Handoff priority: UNKNOWN \(partial history\)$/m, m);
+    assert.match(partial, /^Consider \/handoff before substantial work; earlier history is not counted\.$/m, m);
+  }
 });
 
 // ---- targeted official-source lookup ----
@@ -280,9 +261,9 @@ test('an accepted result applies to that invocation only, is labeled as a live c
   assert.equal(lim.source, 'documented');
   assert.equal(lim.via, 'live');
   const out = renderFor(500, lim);
-  assert.match(out, /^Planning limit: 400k \(documented GPT-6 Luna \/ Work default; live check\)$/m);
-  assert.match(out, /^Model: GPT-6 Luna \(supplied by you with model=; recognized; Work window found by a live check\)$/m);
-  assert.match(out, /^Planning risk: LOW$/m);
+  assert.match(out, /^Planning budget: 400k \(GPT-6 Luna Work window, live check\)$/m);
+  assert.match(out, /^Model: GPT-6 Luna \(user-supplied\) — Work window from live check$/m);
+  assert.match(out, /^Handoff priority: LOW$/m);
   // The next invocation, without a lookup, is back to the registry; nothing was written.
   assert.deepEqual(resolve('/contextestimate model=GPT-6 Luna'), BASELINE);
   assert.equal(JSON.stringify(p.MODEL_REGISTRY), registrySnapshot);
@@ -297,21 +278,21 @@ test('a lookup result alone never establishes a model, and budgets still win', (
   assert.equal(p.resolveLimit(p.parseInvocation('/contextestimate model=GPT-6 Luna'), '64000', undefined, { live: LIVE() }).source, 'saved');
 });
 
-test('lookup that finds nothing, or no search capability, keeps the window unknown and says so concisely', () => {
+test('lookup that finds nothing, or no search tool, keeps the default budget and says so in one note; a search is claimed only when one was used', () => {
   const none = renderFor(500, resolve('/contextestimate model=GPT-6 Luna'), { lookup: 'none-found' });
-  assert.match(none, /^Note: Searched official OpenAI sources for GPT-6 Luna; no ChatGPT Work context window was found\.$/m);
-  assert.match(none, /^Planning risk: UNKNOWN \(model window not documented\)$/m);
-  assert.match(none, /^Planning limit: 128k \(conservative baseline; model window unknown\)$/m);
+  assert.match(none, /^Note: An official-source search found no ChatGPT Work window for GPT-6 Luna\.$/m);
+  assert.match(none, /^Handoff priority: LOW$/m);
+  assert.match(none, /^Planning budget: 128k \(default heuristic\)$/m);
   const unavailable = renderFor(500, resolve('/contextestimate model=GPT-5.6 Terra'), { lookup: 'unavailable' });
-  assert.match(unavailable, /^Note: Search is unavailable here, so GPT-5.6 Terra's Work window stays unknown\.$/m);
+  assert.match(unavailable, /^Note: No search tool was available, so GPT-5\.6 Terra's Work window was not looked up\.$/m);
+  assert.doesNotMatch(unavailable, /searched|search found/i);
+  assert.match(unavailable, /^Handoff priority: LOW$/m);
   // No lookup note without an outcome, and none for an ambiguous name.
-  assert.doesNotMatch(renderFor(500, resolve('/contextestimate model=GPT-6 Luna')), /Searched official|Search is unavailable/);
-  assert.doesNotMatch(renderFor(500, resolve('/contextestimate model=Sol'), { lookup: 'none-found' }), /Searched official/);
+  assert.doesNotMatch(renderFor(500, resolve('/contextestimate model=GPT-6 Luna')), /search/i);
+  assert.doesNotMatch(renderFor(500, resolve('/contextestimate model=Sol'), { lookup: 'none-found' }), /search/i);
   // Unrecognized names can be searched, and the note quotes the name as given.
-  assert.match(renderFor(500, resolve('/contextestimate model=GPT-7 Foo'), { lookup: 'none-found' }), /Searched official OpenAI sources for "GPT-7 Foo"/);
+  assert.match(renderFor(500, resolve('/contextestimate model=GPT-7 Foo'), { lookup: 'none-found' }), /search found no ChatGPT Work window for "GPT-7 Foo"/);
 });
-
-// ---- the accessible-text estimate does not depend on the model ----
 
 test('the accessible-text estimate is identical whichever model is named, asserted, or selected', () => {
   const names = ['', ' model=GPT-6.1 Sol', ' model= GPT-6 Sol', ' model=GPT-6 Luna', ' model=GPT-6 Astra', ' model=GPT-5.6 Terra', ' model=GPT-7 Foo', ' model=Sol'];
@@ -340,7 +321,32 @@ test('switching models between invocations resolves each one afresh and re-estim
   for (const lim of limits) assert.match(renderFor(est, lim), /^Estimated accessible text: <1k tokens$/m);
 });
 
-test('SKILL.md documents the parsing, alias, and per-state rules this suite exercises', () => {
+test('switching between two undocumented models gives the same default budget and the same guidance', () => {
+  for (const tokens of [5000, 70000, 120000]) {
+    const luna = renderFor(tokens, resolve('/contextestimate model=GPT-6 Luna'));
+    const terra = renderFor(tokens, resolve('/contextestimate model=GPT-5.6 Terra'));
+    // Only the Model line differs.
+    const strip = (out) => out.split('\n').filter((l) => !l.startsWith('Model:')).join('\n');
+    assert.equal(strip(luna), strip(terra), String(tokens));
+    assert.match(luna, /^Planning budget: 128k \(default heuristic\)$/m);
+    assert.notEqual(lineStarting(luna, 'Model:'), lineStarting(terra, 'Model:'));
+  }
+});
+
+test('search results produced by this invocation do not inflate its estimate', () => {
+  const body = g.GREETING;
+  const invocation = { role: 'user', text: '/contextestimate model=GPT-6 Luna' };
+  const search = { role: 'tool', text: 'Official sources: '.concat('ChatGPT Work and Codex models. '.repeat(400)), thisInvocation: true };
+  const without = h.estimateMessages([...body, invocation]);
+  assert.equal(h.estimateMessages([...body, invocation, search]), without);
+  // The same text as an ordinary, earlier tool result in the conversation is counted.
+  assert.ok(h.estimateMessages([...body, { ...search, thisInvocation: false }, invocation]) > without + 1000);
+  const out = renderFor(without, resolve('/contextestimate model=GPT-6 Luna'), { lookup: 'none-found' });
+  assert.match(out, /^Estimated accessible text: <1k tokens$/m);
+  assert.match(out, /^Handoff priority: LOW$/m);
+});
+
+test('SKILL.md documents the parsing, alias, and lookup rules this suite exercises', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const { SKILL_DIR } = require('../src/bundle');
@@ -351,7 +357,9 @@ test('SKILL.md documents the parsing, alias, and per-state rules this suite exer
   assert.match(skill, /\(d\) this invocation's `model=` names a recognized model with no documented Work window: search for that exact model's ChatGPT Work context window/);
   assert.match(skill, /Do not browse for an ordinary estimate/);
   assert.match(skill, /scopes that exact number to ChatGPT Work or to Work and Codex for that exact model/);
-  assert.match(skill, /Note: Searched official OpenAI sources for <Model name>; no ChatGPT Work context window was found\./);
-  assert.match(skill, /Note: Search is unavailable here, so <Model name>'s Work window stays unknown\./);
+  assert.match(skill, /Say a search happened only if you actually used a search tool/);
+  assert.ok(skill.includes(p.lookupNote['none-found']('<Model name>')));
+  assert.ok(skill.includes(p.lookupNote.unavailable('<Model name>')));
   assert.match(skill, /never say a user-supplied name was detected/);
+  assert.match(skill, /An unknown, ambiguous, unrecognized, or undocumented model also gets the default; it never blocks guidance/);
 });

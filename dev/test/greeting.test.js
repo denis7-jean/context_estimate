@@ -18,13 +18,12 @@ const { SKILL_DIR } = require('../src/bundle');
 const h = require('../src/heuristic');
 const g = require('../fixtures/greeting');
 const { p, limitFor, BASELINE, SOL, renderFor } = require('./helpers');
-const { scenarios } = require('../evals/scenarios');
+const { scenarios, invocationMessage } = require('../evals/scenarios');
 const { grade } = require('../evals/grade');
 
 const skill = fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
 const tokens = (text) => encode(text).length;
 const truth = (messages) => messages.reduce((s, m) => s + tokens(m.text) + 4, 0);
-const LUNA_REC = p.MODEL_RECOMMENDATIONS.undocumented('GPT-6 Luna');
 
 test('the fixture is the four-message exchange plus invocations, with only visible message text', () => {
   assert.deepEqual(g.GREETING.map((m) => m.text), ['hi', 'Hi! What would you like to work on?', 'Hello World', 'Hello, world! 👋']);
@@ -42,8 +41,8 @@ test('the fixture is the four-message exchange plus invocations, with only visib
 test('the first report in the transcript is the <1k Sol report', () => {
   const report = g.firstReport();
   assert.match(report, /^Estimated accessible text: <1k tokens$/m);
-  assert.match(report, /^Planning limit: 500k \(documented GPT-6\.1 Sol \/ Work default\)$/m);
-  assert.match(report, /^Planning risk: LOW$/m);
+  assert.match(report, /^Planning budget: 500k \(documented GPT-6\.1 Sol Work window, checked 2026-10-23\)$/m);
+  assert.match(report, /^Handoff priority: LOW$/m);
   assert.equal(g.transcriptForSecondRun()[5].text, report);
 });
 
@@ -88,22 +87,22 @@ test('Sol run: the documented 500k default applies and the share is <1%', () => 
   assert.deepEqual(lim, SOL);
   const out = renderFor(h.estimateMessages(g.transcriptForFirstRun()), lim);
   assert.equal(out, g.firstReport());
-  assert.match(out, /^\[█░{19}\] <1% of planning limit$/m);
-  assert.match(out, /^Planning risk: LOW$/m);
+  assert.match(out, /^\[█░{19}\] <1% of planning budget$/m);
+  assert.match(out, /^Handoff priority: LOW$/m);
 });
 
-test('Luna run: baseline denominator, the same <1k text, UNKNOWN, recognized-but-undocumented wording, and no handoff advice', () => {
+test('Luna run: default heuristic budget, the same <1k text, Work window undocumented, LOW and continue normally', () => {
   const lim = limitFor(g.INVOKE_LUNA);
   assert.deepEqual(lim, BASELINE);
   const out = renderFor(h.estimateMessages(g.transcriptForSecondRun()), lim);
   assert.match(out, /^Estimated accessible text: <1k tokens$/m);
   assert.doesNotMatch(out, /~\d+k tokens/);
-  assert.match(out, /^Planning limit: 128k \(conservative baseline; model window unknown\)$/m);
-  assert.match(out, /^\[█░{19}\] <1% of planning limit$/m);
-  assert.match(out, /^Model: GPT-6 Luna \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
-  assert.match(out, /^Planning risk: UNKNOWN \(model window not documented\)$/m);
-  assert.ok(out.includes(`Recommendation:\n${LUNA_REC}`));
-  assert.doesNotMatch(out, /\/handoff|500k|documented GPT|Sol/);
+  assert.match(out, /^Planning budget: 128k \(default heuristic\)$/m);
+  assert.match(out, /^\[█░{19}\] <1% of planning budget$/m);
+  assert.match(out, /^Model: GPT-6 Luna \(user-supplied\) — Work window undocumented$/m);
+  assert.match(out, /^Handoff priority: LOW$/m);
+  assert.ok(out.includes('Recommendation:\nContinue normally.'));
+  assert.doesNotMatch(out, /\/handoff|500k|documented GPT|Sol|limit=N|model=MODEL_ID/);
 });
 
 test('switching Sol -> Luna does not reuse the old denominator or inflate the same accessible transcript', () => {
@@ -118,7 +117,7 @@ test('switching Sol -> Luna does not reuse the old denominator or inflate the sa
   assert.doesNotMatch(luna, /500k|documented GPT/);
   // Switching back re-resolves the documented default; nothing carried over from the Luna run.
   const back = renderFor(second, limitFor(g.INVOKE_SOL));
-  assert.match(back, /^Planning limit: 500k \(documented GPT-6\.1 Sol \/ Work default\)$/m);
+  assert.match(back, /^Planning budget: 500k \(documented GPT-6\.1 Sol Work window, checked 2026-10-23\)$/m);
   // With no evidence after a switch, the result is the baseline, never the previous model's limit.
   assert.deepEqual(limitFor('/contextestimate'), BASELINE);
   // The same accessible text gives the same estimate regardless of the model asserted.
@@ -138,16 +137,16 @@ test('partial-history and attachment uncertainty are unchanged for the greeting 
   const est = h.estimateMessages(g.transcriptForSecondRun());
   for (const [lim, extra] of [
     [SOL, ''],
-    [BASELINE, '; model window unknown'],
+    [BASELINE, ''],
   ]) {
     const hist = renderFor(est, lim, { compacted: true });
-    assert.match(hist, new RegExp(`^Planning risk: UNKNOWN \\(partial history${extra}\\)$`, 'm'));
+    assert.match(hist, new RegExp(`^Handoff priority: UNKNOWN \\(partial history${extra}\\)$`, 'm'));
     assert.match(hist, /^Consider \/handoff before substantial work; earlier history is not counted\.$/m);
     assert.match(hist, /^Estimated accessible text: <1k tokens \(partial\)$/m);
     const att = renderFor(est, lim, { unmeasured: true });
-    assert.match(att, new RegExp(`^Planning risk: UNKNOWN \\(unmeasured attachments${extra}\\)$`, 'm'));
+    assert.match(att, new RegExp(`^Handoff priority: UNKNOWN \\(unmeasured attachments${extra}\\)$`, 'm'));
     assert.match(att, /^Consider \/handoff before substantial work; attachments or images are not counted\.$/m);
-    assert.doesNotMatch(att + hist, /lower bound|Planning risk: LOW/);
+    assert.doesNotMatch(att + hist, /lower bound|Handoff priority: LOW/);
   }
 });
 
@@ -157,11 +156,11 @@ test('the greeting scenarios are in the behavioral set and the grader accepts th
   const sol = byId['greeting-sol'];
   const luna = byId['greeting-luna'];
   assert.ok(sol.truthTokens < 1000 && luna.truthTokens < 1000);
-  const render = (s) => p.render({ kind: 'estimate', tokens: s.truthTokens, limit: p.resolveLimit(p.parseInvocation(s.messages.at(-1).text), 'none') });
+  const render = (s) => p.render({ kind: 'estimate', tokens: s.truthTokens, limit: p.resolveLimit(p.parseInvocation(invocationMessage(s)), 'none') });
   assert.ok(grade(sol, render(sol)).pass);
   assert.ok(grade(luna, render(luna)).pass);
-  // A live-style ~5k report with a handoff recommendation (the observed defect) is rejected.
-  const bad = render(luna).replace('<1k tokens', '~5k tokens').replace('<1% of planning limit', '~4% of planning limit').replace(LUNA_REC, 'Consider /handoff before substantial work; model window unknown.');
+  // A live-style ~5k report for this few-dozen-token transcript (the observed sizing defect) is rejected.
+  const bad = render(luna).replace('<1k tokens', '~5k tokens').replace('<1% of planning budget', '~4% of planning budget');
   assert.equal(grade(luna, bad).pass, false);
 });
 

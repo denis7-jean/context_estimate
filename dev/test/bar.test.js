@@ -84,14 +84,14 @@ test('non-finite or negative usage yields an empty bar', () => {
 
 test('above 100% the bar is full but the numeric percentage stays uncapped', () => {
   const out = p.render({ kind: 'estimate', tokens: 150000, limit: ASSUMED });
-  assert.match(out, /^\[█{20}\] ~117% of planning limit$/m);
-  assert.match(out, /^Planning risk: CRITICAL$/m);
+  assert.match(out, /^\[█{20}\] ~117% of planning budget$/m);
+  assert.match(out, /^Handoff priority: CRITICAL$/m);
 });
 
 test('0% and sub-1% rendering keeps <1% and an honest bar', () => {
   const out = p.render({ kind: 'estimate', tokens: 6, limit: ASSUMED });
-  assert.match(out, /^\[█░{19}\] <1% of planning limit$/m);
-  assert.match(out, /^Planning risk: LOW$/m);
+  assert.match(out, /^\[█░{19}\] <1% of planning budget$/m);
+  assert.match(out, /^Handoff priority: LOW$/m);
 });
 
 test('bar percentage and fill always follow the share of the planning limit', () => {
@@ -99,7 +99,7 @@ test('bar percentage and fill always follow the share of the planning limit', ()
     for (const flags of [{}, { compacted: true }, { unmeasured: true }]) {
       const out = p.render({ kind: 'estimate', tokens, limit: ASSUMED, ...flags });
       const usage = p.formatPercent(p.usagePercent(tokens, 128000));
-      const barLine = /^\[[█░]{20}\] (<1%|~\d+%) of planning limit/m.exec(out);
+      const barLine = /^\[[█░]{20}\] (<1%|~\d+%) of planning budget/m.exec(out);
       assert.ok(barLine, out);
       assert.equal(barLine[1], usage);
       const filled = (barLine[0].match(/█/g) || []).length;
@@ -111,13 +111,13 @@ test('bar percentage and fill always follow the share of the planning limit', ()
 test('planning risk is stated in words on its own line at every usage (never by the bar alone)', () => {
   for (let tokens = 0; tokens <= 200000; tokens += 1000) {
     const out = p.render({ kind: 'estimate', tokens, limit: ASSUMED });
-    assert.match(out, /^Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)$/m);
+    assert.match(out, /^Handoff priority: (LOW|MEDIUM|HIGH|CRITICAL)$/m);
   }
 });
 
 test('plain-text fallback bar uses ASCII only and the same fill', () => {
   const out = p.render({ kind: 'estimate', tokens: 50000, limit: ASSUMED, barStyle: 'ascii' });
-  assert.match(out, /^\[#{8}\.{12}\] ~39% of planning limit$/m);
+  assert.match(out, /^\[#{8}\.{12}\] ~39% of planning budget$/m);
   assert.doesNotMatch(out.split('\n').find((l) => l.startsWith('[')), /[^\x20-\x7e]/);
   assert.equal(p.bar(39.0625, 'ascii'), '[########............]');
   assert.equal(p.bar(117, 'ascii'), '[####################]');
@@ -135,9 +135,9 @@ test('bar=ascii option parsing', () => {
 
 test('partial and unmeasured bars are labeled and never claim a lower bound', () => {
   const partial = p.render({ kind: 'estimate', tokens: 50000, limit: ASSUMED, compacted: true });
-  assert.match(partial, /^\[█{8}░{12}\] ~39% of planning limit \(partial\)$/m);
+  assert.match(partial, /^\[█{8}░{12}\] ~39% of planning budget \(partial\)$/m);
   const text = p.render({ kind: 'estimate', tokens: 50000, limit: ASSUMED, unmeasured: true });
-  assert.match(text, /^\[█{8}░{12}\] ~39% of planning limit \(text only\)$/m);
+  assert.match(text, /^\[█{8}░{12}\] ~39% of planning budget \(text only\)$/m);
   for (const out of [partial, text]) assert.doesNotMatch(out, /lower bound|at least|minimum/i);
 });
 
@@ -145,5 +145,5 @@ test('host and transcript variants carry a bar with a scope label', () => {
   const host = p.render({ kind: 'host', tokens: 64000, limit: ASSUMED, hostLimit: 128000 });
   assert.match(host, /^\[█{10}░{10}\] ~50% of context limit \(host-reported\)$/m);
   const tr = p.render({ kind: 'transcript', tokens: 64000, limit: ASSUMED, tokenizer: 'o200k_base' });
-  assert.match(tr, /^\[█{10}░{10}\] ~50% of planning limit$/m);
+  assert.match(tr, /^\[█{10}░{10}\] ~50% of planning budget$/m);
 });

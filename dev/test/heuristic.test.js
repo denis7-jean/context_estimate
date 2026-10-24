@@ -91,7 +91,7 @@ test('empty conversation estimates near zero and renders <1k / <1% under a docum
   const limit = p.resolveLimit(p.parseInvocation('/contextestimate model=gpt-6.1-sol'), 'none');
   const out = p.render({ kind: 'estimate', tokens: est, limit });
   assert.match(out, /Estimated accessible text: <1k tokens/);
-  assert.match(out, /of planning limit/);
-  assert.match(out, /<1% of planning limit/);
-  assert.match(out, /Planning risk: LOW/);
+  assert.match(out, /of planning budget/);
+  assert.match(out, /<1% of planning budget/);
+  assert.match(out, /Handoff priority: LOW/);
 });

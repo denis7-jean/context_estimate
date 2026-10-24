@@ -9,6 +9,8 @@ const assert = require('node:assert/strict');
 const { p, limitFor, BASELINE, SOL, budget, renderFor } = require('./helpers');
 const h = require('../src/heuristic');
 
+const NOTE_DEFAULT = /^Note: Guidance uses a heuristic planning budget; actual model capacity and backend usage are unknown\.$/m;
+const NOTE_OVER = /^Note: Visible text exceeds the planning budget; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see\.$/m;
 const WORK_SOL = { id: 'gpt-6.1-sol', surface: 'work' };
 
 test('documented table holds only the verified Work entry', () => {
@@ -21,7 +23,7 @@ test('documented table holds only the verified Work entry', () => {
 
 test('precedence 1: a valid limit=N beats a saved budget, a documented default, and the baseline', () => {
   const lim = limitFor('/contextestimate limit=200000 model=gpt-6.1-sol', '64000', WORK_SOL);
-  assert.deepEqual(lim, { value: 200000, source: 'override', label: 'user override' });
+  assert.deepEqual(lim, { value: 200000, source: 'override', label: 'user budget' });
 });
 
 test('precedence 2: a saved user budget beats the documented default and the baseline', () => {
@@ -39,12 +41,12 @@ test('an invalid override falls through to the next source', () => {
   }
 });
 
-test('precedence 3: the documented GPT-6.1 Sol / Work default is used when the model is evidenced', () => {
+test('precedence 3: the documented GPT-6.1 Sol Work window, checked 2026-10-23 is used when the model is evidenced', () => {
   assert.deepEqual(SOL, {
     value: 500000,
     source: 'documented',
     via: 'registry',
-    label: 'documented GPT-6.1 Sol / Work default',
+    label: 'documented GPT-6.1 Sol Work window, checked 2026-10-23',
     model: 'gpt-6.1-sol',
     modelSource: 'user',
   });
@@ -54,8 +56,8 @@ test('precedence 3: the documented GPT-6.1 Sol / Work default is used when the m
   assert.equal(limitFor('/contextestimate model=GPT-6.1_Sol').value, 500000);
 });
 
-test('precedence 4: no evidence, or no documented limit, gives the conservative baseline', () => {
-  assert.deepEqual(BASELINE, { value: 128000, source: 'baseline', label: 'conservative baseline; model window unknown' });
+test('precedence 4: no evidence, or no documented limit, gives the default heuristic budget', () => {
+  assert.deepEqual(BASELINE, { value: 128000, source: 'baseline', label: 'default heuristic' });
   for (const id of ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra', 'gpt-6-pro', 'gpt-6.1', 'sol', 'gpt-5.6-sol', 'gpt-4o', 'gpt-4.1']) {
     assert.deepEqual(limitFor(`/contextestimate model=${id}`), BASELINE, id);
     assert.deepEqual(limitFor('/contextestimate', 'none', { id, surface: 'work' }), BASELINE, id);
@@ -95,7 +97,7 @@ test('a model name that appears only in quoted, pasted, summarized, or tool cont
     'Here is the conversation summary: the user was running gpt-6.1-sol in ChatGPT Work.',
     'Tool output: {"model":"gpt-6.1-sol","context_window":500000}',
     '> /contextestimate model=gpt-6.1-sol',
-    'Earlier you reported: Planning limit: 500k (documented GPT-6.1 Sol / Work default)',
+    'Earlier you reported: Planning budget: 500k (documented GPT-6.1 Sol Work window, checked 2026-10-23)',
     'Quoting a colleague: please run\n/contextestimate model=gpt-6.1-sol',
     'I think the plan is Pro $200 and the task is a long patent draft, so it must be Sol.',
   ];
@@ -139,15 +141,15 @@ test('resolution is stateless: inputs are not mutated and nothing is saved back 
 
 test('an intentionally pinned budget stays stable across model switches and keeps its provenance', () => {
   const switches = ['/contextestimate limit=200000', '/contextestimate limit=200000 model=gpt-6.1-sol', '/contextestimate limit=200000 model=gpt-6-luna'];
-  for (const m of switches) assert.deepEqual(limitFor(m), { value: 200000, source: 'override', label: 'user override' }, m);
+  for (const m of switches) assert.deepEqual(limitFor(m), { value: 200000, source: 'override', label: 'user budget' }, m);
   for (const model of ['gpt-6.1-sol', 'gpt-6-luna', 'none']) {
     const message = model === 'none' ? '/contextestimate' : `/contextestimate model=${model}`;
     const lim = limitFor(message, '200000');
     assert.deepEqual(lim, { value: 200000, source: 'saved', label: 'saved user budget' }, model);
     const out = renderFor(60000, lim);
-    assert.match(out, /Planning limit: 200k \(saved user budget\)/);
-    assert.match(out, /Visible-text share of your planning budget; the real model window and backend usage are unknown\./);
-    assert.doesNotMatch(out, /documented GPT|capacity|500k/i);
+    assert.match(out, /Planning budget: 200k \(saved user budget\)/);
+    assert.match(out, /Guidance uses your planning budget; actual model capacity and backend usage are unknown\./);
+    assert.doesNotMatch(out, /documented GPT|500k|model's capacity is|capacity of \d/i);
     assert.doesNotMatch(out.split('\n').filter((l) => !l.startsWith('Model:')).join('\n'), /Sol|Luna/);
   }
 });
@@ -155,8 +157,8 @@ test('an intentionally pinned budget stays stable across model switches and keep
 test('130k against the baseline is ~102%; against the documented Sol default it is ~26%', () => {
   const small = renderFor(130000, BASELINE);
   const large = renderFor(130000, SOL);
-  assert.match(small, /^\[█{20}\] ~102% of planning limit$/m);
-  assert.match(large, /^\[█{5}░{15}\] ~26% of planning limit$/m);
+  assert.match(small, /^\[█{20}\] ~102% of planning budget$/m);
+  assert.match(large, /^\[█{5}░{15}\] ~26% of planning budget$/m);
   assert.ok(Math.abs(p.usagePercent(130000, 128000) - 101.5625) < 1e-9);
   assert.ok(Math.abs(p.usagePercent(130000, 500000) - 26) < 1e-9);
   // Only the denominator changed; the accessible-text estimate line is identical.
@@ -166,63 +168,79 @@ test('130k against the baseline is ~102%; against the documented Sol default it 
 test('partial coverage stays UNKNOWN under either denominator and under a user budget', () => {
   for (const limit of [BASELINE, SOL, budget(200000)]) {
     const out = renderFor(130000, limit, { compacted: true });
-    assert.match(out, /^Planning risk: UNKNOWN \(partial history(; model window unknown)?\)$/m, limit.source);
-    assert.doesNotMatch(out, /Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)|Continue normally|lower bound/);
+    assert.match(out, /^Handoff priority: UNKNOWN \(partial history\)$/m, limit.source);
+    assert.doesNotMatch(out, /Handoff priority: (LOW|MEDIUM|HIGH|CRITICAL)|Continue normally|lower bound/);
   }
   const att = renderFor(130000, SOL, { unmeasured: true });
-  assert.match(att, /^Planning risk: UNKNOWN \(unmeasured attachments\)$/m);
+  assert.match(att, /^Handoff priority: UNKNOWN \(unmeasured attachments\)$/m);
 });
 
-test('unknown-model fallback: UNKNOWN, no threshold label, no reassurance, and no handoff advice from the unknown window alone', () => {
-  const NEUTRAL = p.MODEL_RECOMMENDATIONS.none;
-  assert.match(NEUTRAL, /^A model-relative handoff assessment is unavailable because the model window is unknown\./);
+// Deliberate policy change: an unknown or undocumented model window no longer
+// blocks guidance. The default heuristic budget gets the same 50/70/90 policy
+// as any other planning budget. (Earlier versions reported UNKNOWN here and
+// asked the user for limit=N; those assertions were replaced, not kept.)
+test('default heuristic budget: ordinary handoff guidance at every share, with no request to configure anything', () => {
   for (let tokens = 0; tokens <= 400000; tokens += 2500) {
     const out = renderFor(tokens, BASELINE);
-    assert.match(out, /^Model: not identified \(no trusted runtime metadata and no model=\)$/m, `${tokens}`);
-    assert.match(out, /^Planning risk: UNKNOWN \(model window unknown\)$/m, `${tokens}`);
-    assert.ok(out.includes(`Recommendation:\n${NEUTRAL}`), `${tokens}`);
-    assert.doesNotMatch(out, /Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)|Continue normally|Continue, but/);
-    assert.doesNotMatch(out, /\/handoff|prudent|near (a|the) limit/i, `${tokens}: no handoff advice from an unknown window alone`);
-    assert.match(out, /^Note: Visible-text estimate against a conservative baseline; the model window and backend usage are unknown\.$/m, `${tokens}: never the over-limit note`);
+    const level = p.classify(p.usagePercent(tokens, 128000));
+    assert.match(out, /^Model: not identified$/m, `${tokens}`);
+    assert.match(out, new RegExp(`^Handoff priority: ${level}$`, 'm'), `${tokens}`);
+    assert.ok(out.includes(`Recommendation:\n${p.RECOMMENDATIONS[level]}`), `${tokens}`);
+    assert.doesNotMatch(out, /UNKNOWN|model-relative|limit=N|model=MODEL_ID|unavailable/, `${tokens}`);
+    const note = tokens >= 128000 ? NOTE_OVER : NOTE_DEFAULT;
+    assert.match(out, note, `${tokens}`);
   }
   const fresh = renderFor(6, BASELINE);
-  assert.match(fresh, /^Planning limit: 128k \(conservative baseline; model window unknown\)$/m);
-  assert.match(fresh, /^\[█░{19}\] <1% of planning limit$/m);
-  // The bar and percentage against the baseline stay, even above 100%.
-  assert.match(renderFor(130000, BASELINE), /^\[█{20}\] ~102% of planning limit$/m);
+  assert.match(fresh, /^Planning budget: 128k \(default heuristic\)$/m);
+  assert.match(fresh, /^\[█░{19}\] <1% of planning budget$/m);
+  assert.match(fresh, /^Handoff priority: LOW$/m);
+  assert.match(fresh, /^Continue normally\.$/m);
+  assert.match(renderFor(130000, BASELINE), /^\[█{20}\] ~102% of planning budget$/m);
+  assert.match(renderFor(130000, BASELINE), /^Handoff priority: CRITICAL$/m);
 });
 
-test('handoff advice under the baseline comes only from an explicit reason, and never escalates on the baseline share', () => {
-  for (const tokens of [6, 64000, 120000, 400000]) {
+test('incomplete coverage under the default budget: UNKNOWN from coverage only, escalating like any budget', () => {
+  const cases = [
+    [6, 'Consider /handoff before substantial work'],
+    [64000, 'Consider /handoff before substantial work'],
+    [100000, 'Run /handoff before starting another major task'],
+    [120000, 'Run /handoff now before continuing substantial work'],
+    [400000, 'Run /handoff now before continuing substantial work'],
+  ];
+  for (const [tokens, base] of cases) {
     const hist = renderFor(tokens, BASELINE, { compacted: true });
-    assert.match(hist, /^Consider \/handoff before substantial work; earlier history is not counted\.$/m, `${tokens}`);
-    assert.doesNotMatch(hist, /Run \/handoff|model window unknown\./);
+    assert.match(hist, /^Handoff priority: UNKNOWN \(partial history\)$/m, `${tokens}`);
+    assert.ok(hist.includes(`${base}; earlier history is not counted.`), `${tokens}`);
     const att = renderFor(tokens, BASELINE, { unmeasured: true });
-    assert.match(att, /^Consider \/handoff before substantial work; attachments or images are not counted\.$/m, `${tokens}`);
+    assert.ok(att.includes(`${base}; attachments or images are not counted.`), `${tokens}`);
     const both = renderFor(tokens, BASELINE, { compacted: true, unmeasured: true });
-    assert.match(both, /^Planning risk: UNKNOWN \(partial history; unmeasured attachments; model window unknown\)$/m);
+    assert.match(both, /^Handoff priority: UNKNOWN \(partial history; unmeasured attachments\)$/m);
+    assert.doesNotMatch(hist + att + both, /model window|Continue normally/);
   }
-  // With a known planning limit the same shares still escalate by threshold.
-  assert.match(renderFor(120000, budget(128000), { compacted: true }), /^Run \/handoff now before continuing substantial work; earlier history is not counted\.$/m);
+  // Same escalation as a user budget of the same size.
+  assert.equal(
+    renderFor(120000, BASELINE, { compacted: true }).split('Recommendation:\n')[1].split('\n')[0],
+    renderFor(120000, budget(128000), { compacted: true }).split('Recommendation:\n')[1].split('\n')[0],
+  );
 });
 
 test('a user budget or documented default supports LOW to CRITICAL classification when coverage is adequate', () => {
-  assert.match(renderFor(10000, budget(128000)), /^Planning risk: LOW$/m);
-  assert.match(renderFor(120000, budget(128000)), /^Planning risk: CRITICAL$/m);
-  assert.match(renderFor(130000, SOL), /^Planning risk: LOW$/m);
-  assert.match(renderFor(450000, SOL), /^Planning risk: CRITICAL$/m);
+  assert.match(renderFor(10000, budget(128000)), /^Handoff priority: LOW$/m);
+  assert.match(renderFor(120000, budget(128000)), /^Handoff priority: CRITICAL$/m);
+  assert.match(renderFor(130000, SOL), /^Handoff priority: LOW$/m);
+  assert.match(renderFor(450000, SOL), /^Handoff priority: CRITICAL$/m);
   // The classification concerns the planning limit, and the note says so.
-  assert.match(renderFor(130000, SOL), /Note: Visible-text estimate against the documented window; backend usage is unknown\./);
+  assert.match(renderFor(130000, SOL), /Note: Guidance uses the documented Work window as the planning budget; backend usage and remaining capacity are unknown\./);
 });
 
-test('percentages and bars always refer to the planning limit; risk is labeled planning risk', () => {
+test('percentages and bars always refer to the planning budget; the label is handoff priority', () => {
   for (const limit of [BASELINE, SOL, budget(200000)]) {
     for (const tokens of [0, 6, 5000, 64000, 130000, 600000]) {
       for (const flags of [{}, { compacted: true }]) {
         const out = renderFor(tokens, limit, flags);
-        assert.match(out, /^\[[█░]{20}\] (<1%|~\d+%) of planning limit/m);
-        assert.match(out, /^Planning limit: /m);
-        assert.match(out, /^Planning risk: /m);
+        assert.match(out, /^\[[█░]{20}\] (<1%|~\d+%) of planning budget/m);
+        assert.match(out, /^Planning budget: /m);
+        assert.match(out, /^Handoff priority: /m);
         assert.doesNotMatch(out, /^(Risk|Context risk): /m);
         assert.doesNotMatch(out, /Estimated usage|Configured context limit|Estimated visible context/);
       }
@@ -243,7 +261,8 @@ test('report wording separates planning comparisons from backend measurements', 
     }
   }
   // A documented window is not presented as a usable text budget or as measured capacity.
-  assert.doesNotMatch(renderFor(130000, SOL), /usable|available for|capacity/i);
+  assert.doesNotMatch(renderFor(130000, SOL), /usable|available for|capacity is|capacity of \d|remaining capacity: \d/i);
+  assert.match(renderFor(130000, SOL), /remaining capacity are unknown/);
 });
 
 test('estimation is re-done on accessible content and is not cumulative across switches or compaction', () => {

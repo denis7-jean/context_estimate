@@ -12,15 +12,15 @@ test('documented GPT-6.1 Sol default: 130k / 500k renders exactly (LOW planning 
     [
       'Context Estimate',
       'Estimated accessible text: ~130k tokens',
-      'Planning limit: 500k (documented GPT-6.1 Sol / Work default)',
-      'Model: GPT-6.1 Sol (supplied by you with model=; recognized; Work window documented)',
-      '[█████░░░░░░░░░░░░░░░] ~26% of planning limit',
+      'Planning budget: 500k (documented GPT-6.1 Sol Work window, checked 2026-10-23)',
+      'Model: GPT-6.1 Sol (user-supplied) — Work window documented',
+      '[█████░░░░░░░░░░░░░░░] ~26% of planning budget',
+      'Handoff priority: LOW',
       '',
-      'Planning risk: LOW',
       'Recommendation:',
       'Continue normally.',
       '',
-      'Note: Visible-text estimate against the documented window; backend usage is unknown.',
+      'Note: Guidance uses the documented Work window as the planning budget; backend usage and remaining capacity are unknown.',
     ].join('\n'),
   );
 });
@@ -31,15 +31,15 @@ test('user override: 91k / 128k renders exactly (HIGH planning risk, budget note
     [
       'Context Estimate',
       'Estimated accessible text: ~91k tokens',
-      'Planning limit: 128k (user override)',
-      'Model: not identified (no trusted runtime metadata and no model=)',
-      '[██████████████░░░░░░] ~71% of planning limit',
+      'Planning budget: 128k (user budget)',
+      'Model: not identified',
+      '[██████████████░░░░░░] ~71% of planning budget',
+      'Handoff priority: HIGH',
       '',
-      'Planning risk: HIGH',
       'Recommendation:',
       'Run /handoff before starting another major task.',
       '',
-      'Note: Visible-text share of your planning budget; the real model window and backend usage are unknown.',
+      'Note: Guidance uses your planning budget; actual model capacity and backend usage are unknown.',
     ].join('\n'),
   );
 });
@@ -84,21 +84,21 @@ test('boundaries from token counts (exact and ±1 token), under a user budget an
 
 test('classification uses unrounded share even when display rounds across a threshold', () => {
   const out = renderFor(0.696 * 128000, budget(128000)); // 69.6% displays ~70% but is MEDIUM
-  assert.match(out, /~70% of planning limit/);
-  assert.match(out, /^Planning risk: MEDIUM$/m);
+  assert.match(out, /~70% of planning budget/);
+  assert.match(out, /^Handoff priority: MEDIUM$/m);
   assert.match(out, /Continue, but plan a \/handoff before a long task\./);
   const below50 = renderFor(0.4996 * 128000, budget(128000));
-  assert.match(below50, /~50% of planning limit/);
-  assert.match(below50, /^Planning risk: LOW$/m);
+  assert.match(below50, /~50% of planning budget/);
+  assert.match(below50, /^Handoff priority: LOW$/m);
 });
 
 test('share above 100% is preserved, not capped, and keeps the planning label', () => {
   const out = renderFor(150000, budget(128000));
   assert.match(out, /Estimated accessible text: ~150k tokens/);
-  assert.match(out, /^\[█{20}\] ~117% of planning limit$/m);
-  assert.match(out, /^Planning risk: CRITICAL$/m);
+  assert.match(out, /^\[█{20}\] ~117% of planning budget$/m);
+  assert.match(out, /^Handoff priority: CRITICAL$/m);
   assert.match(out, /Run \/handoff now before continuing substantial work\./);
-  assert.match(out, /Visible text exceeds the planning limit; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see\./);
+  assert.match(out, /Visible text exceeds the planning budget; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see\./);
   assert.equal(p.formatPercent(p.usagePercent(300000, 128000)), '~234%');
 });
 
@@ -155,42 +155,42 @@ test('options are read from the first line only', () => {
 
 test('user-override label and invalid-limit note', () => {
   const ok = renderFor(42000, budget(200000));
-  assert.match(ok, /Planning limit: 200k \(user override\)/);
-  assert.match(ok, /~21% of planning limit/);
+  assert.match(ok, /Planning budget: 200k \(user budget\)/);
+  assert.match(ok, /~21% of planning budget/);
   const bad = renderFor(42000, limitFor('/contextestimate limit=200k model=gpt-6.1-sol'), { invalidLimitRaw: '200k' });
-  assert.match(bad, /Planning limit: 500k \(documented GPT-6.1 Sol \/ Work default\)/);
+  assert.match(bad, /Planning budget: 500k \(documented GPT-6.1 Sol Work window, checked 2026-10-23\)/);
   assert.match(bad, /Note: Ignored invalid limit "200k"\.$/);
 });
 
 test('unmeasured attachments: partial coverage, UNKNOWN planning risk, no lower-bound claim', () => {
   const out = renderFor(30000, budget(128000), { unmeasured: true });
   assert.match(out, /Estimated accessible text: ~30k tokens \(text only\)/);
-  assert.match(out, /\[█{5}░{15}\] ~23% of planning limit \(text only\)/);
-  assert.match(out, /^Planning risk: UNKNOWN \(unmeasured attachments\)$/m);
+  assert.match(out, /\[█{5}░{15}\] ~23% of planning budget \(text only\)/);
+  assert.match(out, /^Handoff priority: UNKNOWN \(unmeasured attachments\)$/m);
   assert.match(out, /^Consider \/handoff before substantial work; attachments or images are not counted\.$/m);
   assert.match(out, /Note: Counts visible text only, not ChatGPT's backend token usage; attachments or images were not counted, so actual usage may differ\./);
-  assert.doesNotMatch(out, /lower bound|Planning risk: LOW|Continue normally/i);
+  assert.doesNotMatch(out, /lower bound|Handoff priority: LOW|Continue normally/i);
 });
 
-test('50k partial history under the baseline: UNKNOWN for both reasons, never LOW, no share-based escalation', () => {
+test('50k partial history under the default budget: UNKNOWN from coverage alone, never LOW', () => {
   const out = renderFor(50000, BASELINE, { compacted: true });
   assert.equal(
     out,
     [
       'Context Estimate',
       'Estimated accessible text: ~50k tokens (partial)',
-      'Planning limit: 128k (conservative baseline; model window unknown)',
-      'Model: not identified (no trusted runtime metadata and no model=)',
-      '[████████░░░░░░░░░░░░] ~39% of planning limit (partial)',
+      'Planning budget: 128k (default heuristic)',
+      'Model: not identified',
+      '[████████░░░░░░░░░░░░] ~39% of planning budget (partial)',
+      'Handoff priority: UNKNOWN (partial history)',
       '',
-      'Planning risk: UNKNOWN (partial history; model window unknown)',
       'Recommendation:',
       'Consider /handoff before substantial work; earlier history is not counted.',
       '',
       "Note: Counts visible text only, not ChatGPT's backend token usage or internal compaction; earlier history is summarized or truncated, so actual usage may be higher or lower.",
     ].join('\n'),
   );
-  assert.doesNotMatch(out, /lower bound|Planning risk: (LOW|MEDIUM|HIGH|CRITICAL)|Continue/);
+  assert.doesNotMatch(out, /lower bound|Handoff priority: (LOW|MEDIUM|HIGH|CRITICAL)|Continue/);
 });
 
 test('partial history stays UNKNOWN at every share; recommendation scales with the counted share', () => {
@@ -205,7 +205,7 @@ test('partial history stays UNKNOWN at every share; recommendation scales with t
   for (const limit of [budget(128000), SOL]) {
     for (const [share, base] of expectBase) {
       const out = renderFor(share * limit.value, limit, { compacted: true });
-      assert.match(out, /^Planning risk: UNKNOWN \(partial history\)$/m, `${limit.source} ${share}`);
+      assert.match(out, /^Handoff priority: UNKNOWN \(partial history\)$/m, `${limit.source} ${share}`);
       assert.ok(out.includes(`${base}; earlier history is not counted.`), `${share}: ${out}`);
       assert.doesNotMatch(out, /lower bound/i);
     }
@@ -215,7 +215,7 @@ test('partial history stays UNKNOWN at every share; recommendation scales with t
 test('partial history plus unmeasured attachments uses the combined labels', () => {
   const out = renderFor(6000, budget(128000), { compacted: true, unmeasured: true });
   assert.match(out, /~6k tokens \(partial\)/);
-  assert.match(out, /Planning risk: UNKNOWN \(partial history; unmeasured attachments\)/);
+  assert.match(out, /Handoff priority: UNKNOWN \(partial history; unmeasured attachments\)/);
   assert.match(out, /earlier history and attachments or images are not counted\./);
   assert.match(out, /^Note: Counts visible text only, not ChatGPT's backend token usage or internal compaction; earlier history is summarized or truncated and attachments/m);
 });
@@ -236,10 +236,10 @@ test('unavailable estimate returns Unavailable and UNKNOWN planning risk, no num
     [
       'Context Estimate',
       'Estimated accessible text: Unavailable',
-      'Planning limit: 128k (conservative baseline; model window unknown)',
-      'Model: not identified (no trusted runtime metadata and no model=)',
+      'Planning budget: 128k (default heuristic)',
+      'Model: not identified',
+      'Handoff priority: UNKNOWN (no defensible text estimate)',
       '',
-      'Planning risk: UNKNOWN',
       'Recommendation:',
       'If this chat feels long, consider /handoff before substantial work.',
       '',
@@ -254,7 +254,7 @@ test('host telemetry requires a matching host limit and is labeled as measured, 
   assert.match(out, /Measured context: 61,240 tokens \(host-reported\)/);
   assert.match(out, /Context limit: 128k \(host-reported\)/);
   assert.match(out, /~48% of context limit \(host-reported\)/);
-  assert.match(out, /^Context risk: LOW \(host-reported\)$/m);
+  assert.match(out, /^Handoff priority: LOW \(host-reported usage\)$/m);
   assert.match(out, /Note: Host-reported measurement\./);
   assert.doesNotMatch(out, /Planning|Estimated|Visible-text/);
 });
@@ -262,7 +262,7 @@ test('host telemetry requires a matching host limit and is labeled as measured, 
 test('tokenized transcript names the tokenizer and claims nothing about Work models', () => {
   const out = p.render({ kind: 'transcript', tokens: 64000, limit: SOL, tokenizer: 'o200k_base' });
   assert.match(out, /Tokenized transcript: ~64k tokens \(supplied text; tokenizer: o200k_base\)/);
-  assert.match(out, /Planning limit: 500k \(documented GPT-6.1 Sol \/ Work default\)/);
+  assert.match(out, /Planning budget: 500k \(documented GPT-6.1 Sol Work window, checked 2026-10-23\)/);
   assert.match(out, /Note: Counts the supplied text with o200k_base; it may not match any Work model's tokenizer or the active context\./);
   assert.doesNotMatch(out, /host-reported|Measured context/);
 });
@@ -275,7 +275,7 @@ test('every rendered report is short and never claims to run /handoff', () => {
         assert.doesNotMatch(out, /\b(running|ran|started|executing|executed|generated)\b.*handoff/i);
         assert.ok(out.split('\n').length <= 13);
         assert.equal(out.split('\n')[0], 'Context Estimate');
-        assert.match(out, /^Planning risk: /m);
+        assert.match(out, /^Handoff priority: /m);
         assert.doesNotMatch(out, /^Risk: |Estimated usage|Configured context limit/m);
       }
     }

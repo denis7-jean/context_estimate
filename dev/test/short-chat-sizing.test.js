@@ -80,7 +80,7 @@ test('the greeting transcripts are far below the 1k ceiling, not merely under it
 test('a number printed inside an earlier report is text, not the size of the conversation', () => {
   const base = g.transcriptLunaFirstRun();
   const sizes = ['<1k', '~1k', '~10k', '~130k'].map((n) => {
-    const report = g.lunaFirstReport().replace('<1k tokens', `${n} tokens`).replace('<1% of planning limit', '~99% of planning limit');
+    const report = g.lunaFirstReport().replace('<1k tokens', `${n} tokens`).replace('<1% of planning budget', '~99% of planning budget');
     return h.estimateMessages([...base, { role: 'assistant', text: report }, { role: 'user', text: g.INVOKE_SOL }]);
   });
   assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 5, `sizes ${sizes.join(', ')}`);

@@ -94,11 +94,14 @@ function estimateText(text) {
   return { tokens: total, breakdown };
 }
 
-// messages: [{ role, text }]. Each message's text is estimated and a small
-// per-message framing overhead is added.
+// messages: [{ role, text, thisInvocation? }]. Each message's text is estimated
+// and a small per-message framing overhead is added. Tool calls and results
+// produced by the current /contextestimate run (thisInvocation: true), such as
+// an official-source search, are not part of the conversation being measured.
 function estimateMessages(messages) {
   let total = 0;
   for (const msg of messages) {
+    if (msg.thisInvocation) continue;
     total += estimateText(msg.text).tokens + RATES.perMessageOverhead;
   }
   return total;

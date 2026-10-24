@@ -6,11 +6,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { scenarios } = require('../evals/scenarios');
+const { scenarios, invocationMessage } = require('../evals/scenarios');
 const { grade } = require('../evals/grade');
 const { p, referenceReport } = require('./helpers');
 
-const invocationOf = (s) => p.parseInvocation(s.messages.at(-1).text.split(' — ')[0]);
+const invocationOf = (s) => p.parseInvocation(invocationMessage(s).split(' — ')[0]);
 
 const reference = referenceReport;
 
@@ -44,7 +44,7 @@ test('previously observed partial shape (~39%) passes only as UNKNOWN (partial h
   assert.match(good, /~39%/);
   assert.ok(grade(s, good).pass);
   const old = good
-    .replace('Planning risk: UNKNOWN (partial history)', 'Planning risk: LOW (lower bound)')
+    .replace('Handoff priority: UNKNOWN (partial history)', 'Handoff priority: LOW (lower bound)')
     .replace('Consider /handoff before substantial work; earlier history is not counted.', 'Continue, but plan a /handoff before a long task.');
   assert.equal(grade(s, old).pass, false);
 });
@@ -52,8 +52,11 @@ test('previously observed partial shape (~39%) passes only as UNKNOWN (partial h
 test('grader rejects the old labels and layout', () => {
   const s = byId['english-short'];
   const good = reference(s);
-  assert.equal(grade(s, good.replace('Planning risk:', 'Risk:')).pass, false);
-  assert.equal(grade(s, good.replace('Planning limit:', 'Configured context limit:')).pass, false);
+  assert.equal(grade(s, good.replace('Handoff priority:', 'Risk:')).pass, false);
+  assert.equal(grade(s, good.replace('Planning budget:', 'Configured context limit:')).pass, false);
+  assert.equal(grade(s, good.replace('Planning budget:', 'Planning limit:')).pass, false);
+  assert.equal(grade(s, good.replace('Handoff priority:', 'Planning risk:')).pass, false);
+  assert.equal(grade(s, good.replace('of planning budget', 'of planning limit')).pass, false);
   assert.equal(grade(s, good.replace('Estimated accessible text:', 'Estimated visible context:')).pass, false);
   assert.equal(grade(s, good.replace('\n[', '\nEstimated usage: ~1%\n[')).pass, false);
 });
@@ -85,9 +88,9 @@ test('grader rejects capped usage, wrong label, wrong band, and a plain LOW on p
   const over = byId['over-100'];
   assert.equal(grade(over, reference(over).replace(/~\d+%/g, '~100%')).pass, false);
   const budget = byId['english-short'];
-  assert.equal(grade(budget, reference(budget).replace('(user override)', '(saved user budget)')).pass, false);
+  assert.equal(grade(budget, reference(budget).replace('(user budget)', '(saved user budget)')).pass, false);
   const high = byId['tool-heavy-high'];
-  assert.equal(grade(high, reference(high).replace('Planning risk: HIGH', 'Planning risk: MEDIUM')).pass, false);
+  assert.equal(grade(high, reference(high).replace('Handoff priority: HIGH', 'Handoff priority: MEDIUM')).pass, false);
   const comp = byId.compacted;
   const plain = p.render({ kind: 'estimate', tokens: comp.truthTokens, limit: p.resolveLimit(invocationOf(comp), 'none') });
   assert.equal(grade(comp, plain).pass, false);
@@ -100,15 +103,22 @@ test('grader rejects inventing a model default or reusing one without evidence',
     const sol = p.resolveLimit(p.parseInvocation('/contextestimate model=gpt-6.1-sol'), 'none');
     const wrong = reference(s, { limit: sol });
     assert.equal(grade(s, wrong).pass, false, `${id} must not accept the documented default`);
-    const low = reference(s).replace(/Planning risk: UNKNOWN \(.*\)/, 'Planning risk: LOW');
-    assert.equal(grade(s, low).pass, false, `${id} must not accept LOW`);
+    if (s.expect.incomplete) {
+      // Incomplete coverage must never read as an unqualified LOW.
+      const low = reference(s).replace(/Handoff priority: UNKNOWN \(.*\)/, 'Handoff priority: LOW');
+      assert.equal(grade(s, low).pass, false, `${id} must not accept LOW`);
+    } else {
+      // The old policy (UNKNOWN only because the window is unknown) is rejected.
+      const old = reference(s).replace('Handoff priority: LOW', 'Handoff priority: UNKNOWN (model window unknown)');
+      assert.equal(grade(s, old).pass, false, `${id} must not accept UNKNOWN from an unknown window`);
+    }
   }
 });
 
 test('grader rejects a pinned budget relabeled as a model capacity', () => {
   const s = byId['pinned-budget-model-switch'];
   assert.ok(grade(s, reference(s)).pass);
-  assert.equal(grade(s, reference(s).replace('(user override)', '(documented GPT-6 Luna / Work default)')).pass, false);
+  assert.equal(grade(s, reference(s).replace('(user budget)', '(documented GPT-6 Luna / Work default)')).pass, false);
 });
 
 test('grader rejects malformed bars: wrong width, mismatched fill, missing blank lines', () => {
@@ -117,7 +127,8 @@ test('grader rejects malformed bars: wrong width, mismatched fill, missing blank
   const barLine = good.split('\n').find((l) => l.startsWith('['));
   assert.equal(grade(s, good.replace(barLine, barLine.replace('█', ''))).pass, false);
   assert.equal(grade(s, good.replace(barLine, barLine.replace(/\[[█░]{20}\]/, '[██████░░░░░░░░░░░░░░]'))).pass, false);
-  assert.equal(grade(s, good.replace('\n\nPlanning risk', '\nPlanning risk')).pass, false);
+  assert.equal(grade(s, good.replace('Handoff priority: HIGH\n\nRecommendation:', 'Handoff priority: HIGH\nRecommendation:')).pass, false);
+  assert.equal(grade(s, good.replace('\nHandoff priority', '\n\nHandoff priority')).pass, false);
 });
 
 test('grader accepts the ASCII fallback bar', () => {

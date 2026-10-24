@@ -71,8 +71,8 @@ test('registry contents: GPT-6.1 Sol has the official 500,000 Work window; every
 // ---- known and undocumented models ----
 
 test('known model: GPT-6.1 Sol keeps its documented Work default and labels it as documented', () => {
-  assert.deepEqual(SOL, { value: 500000, source: 'documented', via: 'registry', label: 'documented GPT-6.1 Sol / Work default', model: 'gpt-6.1-sol', modelSource: 'user' });
-  assert.match(renderFor(130000, SOL), /^Planning limit: 500k \(documented GPT-6\.1 Sol \/ Work default\)$/m);
+  assert.deepEqual(SOL, { value: 500000, source: 'documented', via: 'registry', label: 'documented GPT-6.1 Sol Work window, checked 2026-10-23', model: 'gpt-6.1-sol', modelSource: 'user' });
+  assert.match(renderFor(130000, SOL), /^Planning budget: 500k \(documented GPT-6\.1 Sol Work window, checked 2026-10-23\)$/m);
   assert.deepEqual(limitFor('/contextestimate', 'none', { id: 'GPT-6.1 Sol', surface: 'work' }).value, 500000);
 });
 
@@ -84,9 +84,9 @@ test('registry models without a documented Work window stay unknown and use the 
     assert.deepEqual(p.needsFreshnessLookup({ modelId: id, today: FRESH }), { needed: false, reasons: [] }, id);
   }
   const out = renderFor(1000, limitFor('/contextestimate model=gpt-6-astra'));
-  assert.match(out, /^Model: GPT-6 Astra \(supplied by you with model=; recognized; no ChatGPT Work window documented\)$/m);
-  assert.match(out, /^Planning risk: UNKNOWN \(model window not documented\)$/m);
-  assert.match(out, /Planning limit: 128k \(conservative baseline; model window unknown\)/);
+  assert.match(out, /^Model: GPT-6 Astra \(user-supplied\) — Work window undocumented$/m);
+  assert.match(out, /^Handoff priority: LOW$/m);
+  assert.match(out, /Planning budget: 128k \(default heuristic\)/);
 });
 
 test('matching is by ID or normalized name only, never by model-family similarity', () => {
@@ -140,10 +140,10 @@ test('live values must be an exact positive integer for the model in question', 
 test('an accepted live value applies to that invocation only, is labeled as a live check, and edits nothing', () => {
   const snapshot = JSON.stringify(p.MODEL_REGISTRY);
   const lim = limitFor('/contextestimate model=gpt-6-luna', 'none', undefined, { live: LIVE_LUNA });
-  assert.deepEqual(lim, { value: 400000, source: 'documented', via: 'live', label: 'documented GPT-6 Luna / Work default; live check', model: 'gpt-6-luna', modelSource: 'user' });
+  assert.deepEqual(lim, { value: 400000, source: 'documented', via: 'live', label: 'GPT-6 Luna Work window, live check', model: 'gpt-6-luna', modelSource: 'user' });
   const out = renderFor(130000, lim);
-  assert.match(out, /^Planning limit: 400k \(documented GPT-6 Luna \/ Work default; live check\)$/m);
-  assert.match(out, /^Planning risk: LOW$/m);
+  assert.match(out, /^Planning budget: 400k \(GPT-6 Luna Work window, live check\)$/m);
+  assert.match(out, /^Handoff priority: LOW$/m);
   // The next invocation without a lookup is back to the registry (unknown window), and the registry is untouched.
   assert.deepEqual(limitFor('/contextestimate model=gpt-6-luna'), BASELINE);
   assert.equal(JSON.stringify(p.MODEL_REGISTRY), snapshot);
@@ -187,7 +187,8 @@ test('stale registry window with no confirming lookup is treated as unknown, wit
     assert.equal(lim.value, 128000);
     assert.equal(lim.staleModel, 'GPT-6.1 Sol');
     const out = renderFor(1000, lim);
-    assert.match(out, /^Planning risk: UNKNOWN \(model window unknown\)$/m);
+    assert.match(out, /^Handoff priority: LOW$/m);
+    assert.match(out, /^Model: GPT-6\.1 Sol \(user-supplied\) — registry window not rechecked in 90\+ days$/m);
     assert.match(out, /^Note: The registry entry for GPT-6\.1 Sol is older than 90 days and was not rechecked, so its window is treated as unknown\.$/m);
     assert.doesNotMatch(out, /\/handoff|500k|documented/);
   }
@@ -197,7 +198,7 @@ test('stale registry window with a confirming Work-scoped lookup uses the live v
   const lim = limitFor('/contextestimate model=gpt-6.1-sol', 'none', undefined, { live: LIVE_SOL, today: STALE });
   assert.equal(lim.value, 500000);
   assert.equal(lim.via, 'live');
-  assert.equal(lim.label, 'documented GPT-6.1 Sol / Work default; live check');
+  assert.equal(lim.label, 'GPT-6.1 Sol Work window, live check');
   assert.equal(lim.staleModel, undefined);
   // A live value that differs is used as given (Work-scoped and official), without editing the registry.
   const changed = limitFor('/contextestimate model=gpt-6.1-sol', 'none', undefined, { live: { ...LIVE_SOL, window: 750000 }, today: STALE });
@@ -244,10 +245,10 @@ test('SKILL.md allows browsing only under the conditional lookup rules', () => {
   assert.match(skill, /Use its result for that invocation only: never say the skill or its registry was updated, never save it into `saved_limit`, and never imply the model is available to the user's plan or workspace/);
   assert.match(skill, /Accept a looked-up window only if the official source explicitly scopes that exact number to ChatGPT Work or to Work and Codex for that exact model/);
   assert.match(skill, /Do not accept API context windows, maximum output limits, usage allowances or credit rates, Codex-only or Chat-only values, a figure for another model, or a value inferred from a model family/);
-  assert.match(skill, /If the source is inaccessible, ambiguous, stale, or API-only, or no search is available, keep the window unknown \(baseline\)/);
-  assert.match(skill, /A registry window older than 90 days that you could not recheck is treated as unknown \(baseline\), with the extra line `Note: The registry entry for <Model name> is older than 90 days and was not rechecked, so its window is treated as unknown\.`/);
+  assert.match(skill, /If the source is inaccessible, ambiguous, stale, or API-only, or no search is available, keep the window unknown \(default budget\)/);
+  assert.match(skill, /A registry window older than 90 days that you could not recheck is treated as unknown \(default budget\), with the extra line `Note: The registry entry for <Model name> is older than 90 days and was not rechecked, so its window is treated as unknown\.`/);
   assert.ok(skill.includes(p.staleNote('<Model name>').replace(/^Note: /, '')));
-  assert.match(skill, /a lookup result is labeled `\(documented <Model name> \/ Work default; live check\)`/);
+  assert.match(skill, /a lookup result is labeled `\(<Model name> Work window, live check\)`/);
   assert.match(skill, /A listing does not mean a model is available to this user's plan, workspace, role, or rollout/);
   assert.match(skill, /Do not infer a window from API documentation, output limits, usage allowances, credit rates, or a model in the same family, and do not add rows from memory/);
   // Evidence rules for the model itself are unchanged.

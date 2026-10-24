@@ -13,12 +13,15 @@ const path = require('node:path');
 const { scenarios } = require('./scenarios');
 const { RECOMMENDATIONS, barFill } = require('../src/policy');
 
-const REASON = '(?:partial history|unmeasured attachments|model window unknown|model window not documented|model not recognized|model ambiguous)';
-const RISK_RE = new RegExp(`^Planning risk: (LOW|MEDIUM|HIGH|CRITICAL|UNKNOWN)(?: \\((${REASON}(?:; ${REASON})*)\\))?$`);
-const BAR_RE = /^\[([█░]{20}|[#.]{20})\] (<1%|~\d+%) of planning limit(?: \((?:partial|text only)\))?$/;
+const REASON = '(?:partial history|unmeasured attachments)';
+const PRIORITY_RE = new RegExp(`^Handoff priority: (LOW|MEDIUM|HIGH|CRITICAL|UNKNOWN)(?: \\((${REASON}(?:; ${REASON})*)\\))?$`);
+const BAR_RE = /^\[([█░]{20}|[#.]{20})\] (<1%|~\d+%) of planning budget(?: \((?:partial|text only)\))?$/;
 const BASE = '(Consider \\/handoff before substantial work|Run \\/handoff before starting another major task|Run \\/handoff now before continuing substantial work)';
 const HIST = '(?:earlier history is not counted|attachments or images are not counted|earlier history and attachments or images are not counted)';
 const PARTIAL_REC_RE = new RegExp(`^${BASE}; ${HIST}\\.$`);
+// Wording that would present a budget as the model's real capacity, or usage as measured.
+const OVERCLAIM_RE =
+  /backend (usage|tokens?) (is|was|are) (measured|\d)|measured (backend|context)|actual (usage|context) (is|was) \d|remaining capacity (is|was) \d|(heuristic|default|planning) budget is (the|your) model'?s|model'?s (actual|real) (window|capacity) is|128k is (the|a) documented/i;
 
 function parseTokens(display) {
   if (/^<1k\b/.test(display)) return { lo: 0, hi: 999, mid: 500 };
@@ -37,25 +40,28 @@ function grade(scenario, output) {
   const lines = raw.filter((l) => l !== '');
   const exp = scenario.expect;
 
-  // Layout: header, text, planning limit, model, bar+share, planning risk,
-  // "Recommendation:", recommendation, notes.
+  // Layout: header, text, planning budget, model, bar+share, handoff priority,
+  // blank, "Recommendation:", recommendation, blank, notes.
   add('no code fences', !/```/.test(text));
   const layoutOk =
     lines.length >= 9 &&
     lines.length <= 12 &&
     /^Context Estimate$/.test(lines[0]) &&
     /^Estimated accessible text: .+$/.test(lines[1]) &&
-    /^Planning limit: .+$/.test(lines[2]) &&
+    /^Planning budget: .+$/.test(lines[2]) &&
     /^Model: .+$/.test(lines[3]) &&
     /^\[/.test(lines[4]) &&
-    /^Planning risk: /.test(lines[5]) &&
+    /^Handoff priority: /.test(lines[5]) &&
     /^Recommendation:$/.test(lines[6]);
   add('line order matches the documented layout', layoutOk, lines.slice(0, 7).join(' | '));
-  const blanksOk = raw[5] === '' && raw[raw.length - 1] !== '' && raw.filter((l) => l === '').length === 2 && raw.indexOf('', 6) > 6;
-  add('blank lines after the bar and after the recommendation', blanksOk);
+  const blanksOk = raw[6] === '' && raw[raw.length - 1] !== '' && raw.filter((l) => l === '').length === 2 && raw.indexOf('', 7) > 7;
+  add('blank lines after the priority and after the recommendation', blanksOk);
   const notes = lines.slice(8);
   add('1–4 Note lines and nothing else after the recommendation', notes.length >= 1 && notes.length <= 4 && notes.every((l) => l.startsWith('Note: ')), notes.join(' | '));
-  add('uses the current labels (no "Risk:", "Estimated usage", or "Configured context limit")', !/^(Risk:|Estimated usage|Configured context limit|Estimated visible context)/m.test(text));
+  add(
+    'uses the current labels (no "Planning limit", "Planning risk", "conservative baseline", or older labels)',
+    !/^(Risk:|Planning risk|Planning limit|Estimated usage|Configured context limit|Estimated visible context)|conservative baseline|of planning limit|model-relative handoff assessment/m.test(text),
+  );
 
   // Model resolution line
   if (exp.modelLine) add('model line states how the model was resolved', lines[3] === exp.modelLine, `got "${lines[3]}"`);
@@ -63,7 +69,7 @@ function grade(scenario, output) {
 
   // Bar
   const barM = BAR_RE.exec(lines[4] || '');
-  add('progress bar line is well-formed (20 cells, "of planning limit")', barM, lines[4]);
+  add('progress bar line is well-formed (20 cells, "of planning budget")', barM, lines[4]);
   if (barM) {
     const shownText = barM[2];
     const shown = shownText === '<1%' ? 0.5 : Number(shownText.replace(/[~%]/g, ''));
@@ -73,28 +79,24 @@ function grade(scenario, output) {
     if (exp.usageOver100) add('full bar with percentage above 100% preserved', filled === 20 && shown > 100, lines[4]);
   }
 
-  // Planning risk and recommendation
-  const riskM = RISK_RE.exec(lines[5] || '');
-  const riskText = riskM ? lines[5].replace(/^Planning risk: /, '') : null;
-  add(`planning risk is ${exp.risk}`, riskText === exp.risk, `got ${riskText}`);
+  // Handoff priority and recommendation
+  const prioM = PRIORITY_RE.exec(lines[5] || '');
+  const prioText = prioM ? lines[5].replace(/^Handoff priority: /, '') : null;
+  add(`handoff priority is ${exp.risk}`, prioText === exp.risk, `got ${prioText}`);
   const rec = lines[7] || '';
   if (exp.incomplete) {
-    add('UNKNOWN planning risk with a stated reason', riskM && riskM[1] === 'UNKNOWN' && Boolean(riskM[2]));
-    if (exp.incomplete === 'baseline') {
-      add('unknown model state gives its own recommendation, with no handoff advice', Boolean(exp.recommendation) && rec === exp.recommendation && !/\/handoff/i.test(text), rec);
-    } else {
-      add('recommendation names what is not counted', PARTIAL_REC_RE.test(rec), rec);
-    }
+    add('UNKNOWN priority with a coverage reason', prioM && prioM[1] === 'UNKNOWN' && Boolean(prioM[2]));
+    add('recommendation names what is not counted', PARTIAL_REC_RE.test(rec), rec);
   } else {
-    add('recommendation matches planning-risk policy', riskM && rec === RECOMMENDATIONS[riskM[1]], rec);
+    add('recommendation matches the handoff-priority policy', prioM && rec === RECOMMENDATIONS[prioM[1]], rec);
   }
   if (exp.recommendation) add('recommendation matches expected wording', rec === exp.recommendation, `expected "${exp.recommendation}"`);
   add('never uses "lower bound" wording', !/lower bound/i.test(text));
-  add('never says limit=N reveals the real window', !/limit=N[^.]*(reveal|actual window is)/i.test(text));
+  add('never presents a budget as the model window, or usage/capacity as measured', !OVERCLAIM_RE.test(text));
 
-  // Planning limit and provenance
-  const limitVal = (lines[2] || '').replace(/^Planning limit: /, '');
-  add(`planning limit is ${exp.limit}`, limitVal === exp.limit, `got "${limitVal}"`);
+  // Planning budget and provenance
+  const budgetVal = (lines[2] || '').replace(/^Planning budget: /, '');
+  add(`planning budget is ${exp.limit}`, budgetVal === exp.limit, `got "${budgetVal}"`);
 
   // Accessible text
   const tokVal = (lines[1] || '').replace(/^[^:]+: /, '');
@@ -114,7 +116,6 @@ function grade(scenario, output) {
 
   // Honesty and safety
   add('no host-measurement claim', !/host-reported|Measured context|Context risk/i.test(text));
-  add('does not claim backend usage or the model window was measured', !/backend (usage|tokens?) (is|was|are) (measured|\d)|measured (backend|context)|actual (usage|context) (is|was) \d/i.test(text));
   add(
     'does not run or draft /handoff',
     !/\b(running|ran|starting|started|executing|executed|invoking|invoked|calling)\s+(the\s+)?\/?handoff|here is (your|the) handoff|^#+\s*handoff|handoff (document|summary)\s*:/im.test(text),

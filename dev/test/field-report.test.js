@@ -65,9 +65,9 @@ test('field-report shape renders UNKNOWN with the visible-text vs backend distin
   const limit = p.resolveLimit(p.parseInvocation(s.messages.at(-1).text), 'none');
   const out = p.render({ kind: 'estimate', tokens: s.truthTokens, limit, compacted: true, unmeasured: true });
   assert.match(out, /^Estimated accessible text: ~7k tokens \(partial\)$/m);
-  assert.match(out, /^Planning limit: 5,300 \(user override\)$/m);
-  assert.match(out, /^\[█{20}\] ~135% of planning limit \(partial\)$/m);
-  assert.match(out, /^Planning risk: UNKNOWN \(partial history; unmeasured attachments\)$/m);
+  assert.match(out, /^Planning budget: 5,300 \(user budget\)$/m);
+  assert.match(out, /^\[█{20}\] ~135% of planning budget \(partial\)$/m);
+  assert.match(out, /^Handoff priority: UNKNOWN \(partial history; unmeasured attachments\)$/m);
   assert.match(out, /^Run \/handoff now before continuing substantial work; earlier history and attachments or images are not counted\.$/m);
   assert.match(out, /Counts visible text only, not ChatGPT's backend token usage or internal compaction/);
   assert.doesNotMatch(out, /lower bound|measured by ChatGPT|backend usage is|compaction (was|occurred|happened)/i);
@@ -78,19 +78,19 @@ test('the same conversation with full coverage keeps CRITICAL and notes what the
   const s = byId['long-drafts-complete'];
   const limit = p.resolveLimit(p.parseInvocation(s.messages.at(-1).text), 'none');
   const out = p.render({ kind: 'estimate', tokens: s.truthTokens, limit });
-  assert.match(out, /^Planning risk: CRITICAL$/m);
+  assert.match(out, /^Handoff priority: CRITICAL$/m);
   assert.match(out, /~134%/);
-  assert.match(out, /^Note: Visible text exceeds the planning limit; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see\.$/m);
+  assert.match(out, /^Note: Visible text exceeds the planning budget; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see\.$/m);
   assert.ok(grade(s, out).pass);
 });
 
 test('the over-limit note appears only at or above 100% with full coverage', () => {
   const render = (t, extra = {}) => p.render({ kind: 'estimate', tokens: t, limit: ASSUMED, ...extra });
-  assert.doesNotMatch(render(127999), /exceeds the planning limit/);
-  assert.match(render(128000), /exceeds the planning limit/);
-  assert.match(render(300000), /exceeds the planning limit/);
-  assert.doesNotMatch(render(300000, { compacted: true }), /exceeds the planning limit/);
-  assert.doesNotMatch(p.render({ kind: 'transcript', tokens: 300000, limit: ASSUMED, tokenizer: 'o200k_base' }), /exceeds the planning limit/);
+  assert.doesNotMatch(render(127999), /exceeds the planning budget/);
+  assert.match(render(128000), /exceeds the planning budget/);
+  assert.match(render(300000), /exceeds the planning budget/);
+  assert.doesNotMatch(render(300000, { compacted: true }), /exceeds the planning budget/);
+  assert.doesNotMatch(p.render({ kind: 'transcript', tokens: 300000, limit: ASSUMED, tokenizer: 'o200k_base' }), /exceeds the planning budget/);
 });
 
 test('every partial or over-limit note says what it does not measure', () => {
@@ -105,14 +105,14 @@ test('every partial or over-limit note says what it does not measure', () => {
 
 test('SKILL.md separates visible text, internal compaction, and backend usage', () => {
   assert.match(skill, /### What the number is, and is not/);
-  assert.match(skill, /The percentage is visible-text size divided by the planning limit, not ChatGPT's usage; it can be above or below the real figure/);
+  assert.match(skill, /The percentage is visible-text size divided by the planning budget, not ChatGPT's usage or remaining capacity; it can be above or below the real figure/);
   assert.match(skill, /Internal compaction and other backend state \(hidden summaries, truncation, memory, retrieval, system prompts, hidden reasoning\) cannot be inspected/);
   assert.match(skill, /You have no access to actual backend token usage/);
   assert.match(skill, /Count every printed copy once, so three full drafts of the same document count three times/);
   assert.match(skill, /"context optimization" text that was printed in the chat counts like any other message/);
   assert.match(skill, /never say it happened, never count or subtract it, and never present it as measured/);
   assert.match(skill, /Say history is summarized or truncated only when you can see a summary or a truncation marker/);
-    assert.match(skill, /Turn count, chat age, and how long the chat "feels" are not evidence of size in either direction/);
+  assert.match(skill, /Turn count, chat age, and how long the chat "feels" are not evidence of size in either direction/);
   assert.match(skill, /do not stretch a count over text you cannot see/);
 });
 

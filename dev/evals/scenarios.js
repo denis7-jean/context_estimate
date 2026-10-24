@@ -1,9 +1,11 @@
 'use strict';
 // Behavioral scenarios for /contextestimate. Each scenario is a conversation
-// the assistant can see, the invoking message (always the last one), and what a
-// correct report must satisfy. `truthTokens` is the o200k_base count of the
-// visible message text plus 4 tokens of framing per message — the same scope
-// the skill estimates. It is a reference count for the synthetic text only.
+// the assistant can see, the invoking message (the last user message), and
+// what a correct report must satisfy. `truthTokens` is the o200k_base count of
+// the visible message text plus 4 tokens of framing per message — the same
+// scope the skill estimates — and, like the skill, it leaves out tool output
+// produced by the current invocation itself (thisInvocation: true). It is a
+// reference count for the synthetic text only.
 
 const { encode } = require('gpt-tokenizer/encoding/o200k_base');
 const t = require('../fixtures/texts');
@@ -13,15 +15,16 @@ const greeting = require('../fixtures/greeting');
 
 const u = (text) => ({ role: 'user', text });
 const a = (text) => ({ role: 'assistant', text });
-const tool = (text) => ({ role: 'tool', text });
+const tool = (text, extra = {}) => ({ role: 'tool', text, ...extra });
 
-const BASELINE = '128k (conservative baseline; model window unknown)';
-const SOL = '500k (documented GPT-6.1 Sol / Work default)';
-const { MODEL_RECOMMENDATIONS } = require('../src/policy');
-const NEUTRAL = MODEL_RECOMMENDATIONS.none;
-const M_NONE = 'Model: not identified (no trusted runtime metadata and no model=)';
-const M_SOL = 'Model: GPT-6.1 Sol (supplied by you with model=; recognized; Work window documented)';
-const M_UNDOC = (name) => `Model: ${name} (supplied by you with model=; recognized; no ChatGPT Work window documented)`;
+const DEFAULT = '128k (default heuristic)';
+const SOL = '500k (documented GPT-6.1 Sol Work window, checked 2026-10-23)';
+const M_NONE = 'Model: not identified';
+const M_SOL = 'Model: GPT-6.1 Sol (user-supplied) — Work window documented';
+const M_UNDOC = (name) => `Model: ${name} (user-supplied) — Work window undocumented`;
+const NOTE_DEFAULT = /^Note: Guidance uses a heuristic planning budget; actual model capacity and backend usage are unknown\.$/m;
+const NOTE_BUDGET = /^Note: Guidance uses your planning budget; actual model capacity and backend usage are unknown\.$/m;
+const NOTE_DOC = /^Note: Guidance uses the documented Work window as the planning budget; backend usage and remaining capacity are unknown\.$/m;
 
 const englishTurns = [
   u(h.englishChat.split('\n\n')[0]),
@@ -38,68 +41,55 @@ const SUMMARY_TURNS = [
   a('We had finished the cache step and still needed owners for the base image and a retention policy for failed runners.'),
 ];
 
-// Live regression: model= resolution states, one scenario each. The short
-// conversation keeps the accessible text under 1k so only the model handling
-// differs between them.
+// Two full drafts: a ~5k-token conversation.
+const FIVE_K_TURNS = [u('Please draft the patent application.'), a(draft(1)), u('Revise it with the controller alternative.'), a(draft(2))];
+
+// model= resolution states, one scenario each. The short conversation keeps the
+// accessible text under 1k so only the model handling differs between them, and
+// every state gets ordinary default-budget guidance.
 function modelScenario(id, what, invocation, expect, extra = {}) {
   return {
     id,
     what,
     messages: [...englishTurns, u(invocation)],
-    expect: { tokensDisplay: '<1k', usageDisplay: '<1%', ...expect },
+    expect: { tokensDisplay: '<1k', usageDisplay: '<1%', risk: 'LOW', limit: DEFAULT, recommendation: 'Continue normally.', must: [NOTE_DEFAULT], ...expect },
     ...extra,
   };
 }
 
 function modelScenarios() {
-  const undoc = (name, risk = 'UNKNOWN (model window not documented)') => ({
-    risk,
-    incomplete: 'baseline',
-    limit: BASELINE,
-    modelLine: M_UNDOC(name),
-    recommendation: MODEL_RECOMMENDATIONS.undocumented(name),
-    mustNot: [/~\d+k tokens/, /documented GPT|500k/, /model=MODEL_ID/],
-  });
+  const undoc = (name) => ({ modelLine: M_UNDOC(name), mustNot: [/~\d+k tokens/, /documented GPT|500k/, /model=MODEL_ID|limit=N/] });
   return [
-    modelScenario('model-observed-gpt-6-sol', 'The observed input "/contextestimate model= GPT-6 Sol": space after "=", multiword name. Recognized, no documented Work window: baseline, UNKNOWN, own recommendation, no request to repeat model=', '/contextestimate model= GPT-6 Sol', undoc('GPT-6 Sol')),
+    modelScenario('model-observed-gpt-6-sol', 'The observed input "/contextestimate model= GPT-6 Sol": recognized, Work window undocumented, default heuristic budget, LOW, continue normally; no request to configure anything', '/contextestimate model= GPT-6 Sol', undoc('GPT-6 Sol')),
     modelScenario('model-gpt-5-6-terra', 'Multiword display name with a dot', '@contextestimate model=GPT-5.6 Terra', undoc('GPT-5.6 Terra')),
     modelScenario('model-luna-backticks', 'Backtick-quoted name', '/contextestimate model=`GPT-6 Luna`', undoc('GPT-6 Luna')),
     modelScenario('model-astra-label', 'Official short label "Astra" resolves to GPT-6 Astra', '/contextestimate model=Astra', undoc('GPT-6 Astra')),
-    modelScenario('model-sol-picker-label', 'GPT-6.1 Sol with the picker reasoning word: recognized, documented 500k', '@contextestimate model=GPT-6.1 Sol Medium', {
-      risk: 'LOW',
+    modelScenario('model-sol-picker-label', 'GPT-6.1 Sol with the picker reasoning word: documented 500k', '@contextestimate model=GPT-6.1 Sol Medium', {
       limit: SOL,
       modelLine: M_SOL,
-      must: [/Visible-text estimate against the documented window/],
+      must: [NOTE_DOC],
     }),
-    modelScenario('model-unrecognized', 'A name that is not in the Work registry: said so, asks for a clearer name or limit=N', '/contextestimate model=GPT-7 Foo', {
-      risk: 'UNKNOWN (model not recognized)',
-      incomplete: 'baseline',
-      limit: BASELINE,
-      modelLine: 'Model: "GPT-7 Foo" (supplied by you with model=; not recognized, not in the Work model registry)',
-      recommendation: MODEL_RECOMMENDATIONS.unrecognized,
-      mustNot: [/recognized, but/, /documented GPT|500k/],
-    }),
-    modelScenario('model-ambiguous-sol', 'A bare family word matches several registry names: ambiguous, no guess', '/contextestimate model=Sol', {
-      risk: 'UNKNOWN (model ambiguous)',
-      incomplete: 'baseline',
-      limit: BASELINE,
-      modelLine: 'Model: "Sol" (supplied by you with model=; ambiguous or incomplete, could be GPT-6.1 Sol, GPT-6 Sol, GPT-5.6 Sol)',
-      recommendation: MODEL_RECOMMENDATIONS.ambiguous('GPT-6.1 Sol, GPT-6 Sol, GPT-5.6 Sol'),
+    modelScenario('model-unrecognized', 'A name that is not in the Work registry: said so on the Model line, default-budget guidance still given', '/contextestimate model=GPT-7 Foo', {
+      modelLine: 'Model: "GPT-7 Foo" (user-supplied) — not in the Work model registry',
       mustNot: [/documented GPT|500k/],
     }),
-    modelScenario('model-lookup-none-found', 'Explicit model= for a recognized model with no documented window; a search found no Work-scoped value', '/contextestimate model=GPT-6 Luna', {
+    modelScenario('model-ambiguous-sol', 'A bare family word matches several registry names: ambiguous, no guess, default-budget guidance still given', '/contextestimate model=Sol', {
+      modelLine: 'Model: "Sol" (user-supplied) — ambiguous: GPT-6.1 Sol, GPT-6 Sol, GPT-5.6 Sol',
+      mustNot: [/documented GPT|500k/],
+    }),
+    modelScenario('model-lookup-none-found', 'Explicit model= for a recognized model with no documented window; a search tool was used and found no Work-scoped value', '/contextestimate model=GPT-6 Luna', {
       ...undoc('GPT-6 Luna'),
-      must: [/Note: Searched official OpenAI sources for GPT-6 Luna; no ChatGPT Work context window was found\./],
+      must: [NOTE_DEFAULT, /^Note: An official-source search found no ChatGPT Work window for GPT-6 Luna\.$/m],
     }, { lookup: 'none-found' }),
-    modelScenario('model-lookup-unavailable', 'Explicit model= but search is not available in the runtime', '/contextestimate model=GPT-5.6 Terra', {
+    modelScenario('model-lookup-unavailable', 'Explicit model= but no search tool exists in the runtime: no claim that a search happened', '/contextestimate model=GPT-5.6 Terra', {
       ...undoc('GPT-5.6 Terra'),
-      must: [/Note: Search is unavailable here, so GPT-5.6 Terra's Work window stays unknown\./],
+      must: [NOTE_DEFAULT, /^Note: No search tool was available, so GPT-5\.6 Terra's Work window was not looked up\.$/m],
+      mustNot: [/searched|search found/i],
     }, { lookup: 'unavailable' }),
-    modelScenario('model-with-budget', 'A recognized model plus limit=N: the budget is the planning limit (user override), the model line still says no Work window is documented', '/contextestimate limit=250000 model=GPT-6 Sol', {
-      risk: 'LOW',
-      limit: '250k (user override)',
+    modelScenario('model-with-budget', 'A recognized model plus limit=N: the user budget is the planning budget; the model line still says the Work window is undocumented', '/contextestimate limit=250000 model=GPT-6 Sol', {
+      limit: '250k (user budget)',
       modelLine: M_UNDOC('GPT-6 Sol'),
-      must: [/Visible-text share of your planning budget/],
+      must: [NOTE_BUDGET],
     }),
   ];
 }
@@ -107,85 +97,73 @@ function modelScenarios() {
 const raw = [
   {
     id: 'new-chat-sol',
-    what: 'Fresh chat; the user asserts the Work model, so the documented default applies',
+    what: 'Fresh chat; the user asserts the Work model, so the documented window is the planning budget',
     messages: [u('/contextestimate model=gpt-6.1-sol')],
-    expect: { risk: 'LOW', limit: SOL, tokensDisplay: '<1k', usageDisplay: '<1%', must: [/Visible-text estimate against the documented window; backend usage is unknown\./] },
+    expect: { risk: 'LOW', limit: SOL, tokensDisplay: '<1k', usageDisplay: '<1%', must: [NOTE_DOC] },
   },
   {
     id: 'new-chat-unknown-model',
-    what: 'Fresh chat with no model evidence and no budget: baseline, planning risk UNKNOWN, no LOW reassurance',
+    what: 'Fresh chat with no model evidence and no budget: default heuristic budget, LOW, continue normally',
     messages: [u('/contextestimate')],
-    expect: {
-      risk: 'UNKNOWN (model window unknown)',
-      incomplete: 'baseline',
-      limit: BASELINE,
-      tokensDisplay: '<1k',
-      recommendation: NEUTRAL,
-      mustNot: [/Planning risk: LOW/, /Continue normally/],
-    },
+    expect: { risk: 'LOW', limit: DEFAULT, tokensDisplay: '<1k', recommendation: 'Continue normally.', must: [NOTE_DEFAULT], mustNot: [/limit=N|model=/] },
   },
   {
     id: 'greeting-sol',
-    what: 'Real smoke-test shape: four-message greeting exchange, /contextestimate on GPT-6.1 Sol (user asserts the model). Stays under 1k against the documented default',
+    what: 'Real smoke-test shape: four-message greeting exchange, /contextestimate on GPT-6.1 Sol (user asserts the model). Stays under 1k against the documented window',
     messages: greeting.transcriptForFirstRun(),
-    expect: {
-      risk: 'LOW',
-      limit: SOL,
-      tokensDisplay: '<1k',
-      usageDisplay: '<1%',
-      mustNot: [/~\d+k tokens/],
-    },
+    expect: { risk: 'LOW', limit: SOL, tokensDisplay: '<1k', usageDisplay: '<1%', mustNot: [/~\d+k tokens/] },
   },
   {
     id: 'greeting-luna',
-    what: 'Same exchange plus the first report, /contextestimate model=gpt-6-luna after switching to GPT-6 Luna: same accessible text, still under 1k, the model is recognized but has no documented Work window, baseline labeled, no handoff advice',
+    what: 'Same exchange plus the first report, /contextestimate model=gpt-6-luna after switching to GPT-6 Luna: still under 1k, Work window undocumented, default budget, LOW, continue normally',
     messages: greeting.transcriptForSecondRun(),
-    expect: {
-      risk: 'UNKNOWN (model window not documented)',
-      incomplete: 'baseline',
-      limit: BASELINE,
-      tokensDisplay: '<1k',
-      usageDisplay: '<1%',
-      recommendation: MODEL_RECOMMENDATIONS.undocumented('GPT-6 Luna'),
-      mustNot: [/~\d+k tokens/, /documented GPT|500k/],
-    },
+    expect: { risk: 'LOW', limit: DEFAULT, tokensDisplay: '<1k', usageDisplay: '<1%', recommendation: 'Continue normally.', must: [NOTE_DEFAULT], mustNot: [/~\d+k tokens/, /documented GPT|500k/] },
   },
   {
     id: 'greeting-luna-first',
-    what: 'Second live case, first run: the four-message greeting (Luna, then Sol) and /contextestimate with no model evidence. The live run reported ~10k; the visible text is a few dozen tokens, so anything at or above 1k is wrong. Baseline, UNKNOWN, retry guidance',
+    what: 'Second live case, first run: the four-message greeting and /contextestimate with no model evidence. The live run reported ~10k; the visible text is a few dozen tokens. Default budget, LOW',
     messages: greeting.transcriptLunaFirstRun(),
-    expect: {
-      risk: 'UNKNOWN (model window unknown)',
-      incomplete: 'baseline',
-      limit: BASELINE,
-      tokensDisplay: '<1k',
-      usageDisplay: '<1%',
-      recommendation: NEUTRAL,
-      mustNot: [/~\d+k tokens/, /documented|500k/],
-    },
+    expect: { risk: 'LOW', limit: DEFAULT, tokensDisplay: '<1k', usageDisplay: '<1%', recommendation: 'Continue normally.', mustNot: [/~\d+k tokens/, /documented|500k/] },
   },
   {
     id: 'greeting-sol-second',
-    what: 'Second live case, second run: same visible text plus the first report and a Sol invocation. Still under 1k; only the planning limit and risk differ from the Luna run',
+    what: 'Second live case, second run: same visible text plus the first report and a Sol invocation. Still under 1k; only the planning budget differs from the Luna run',
     messages: greeting.transcriptSolSecondRun(),
-    expect: {
-      risk: 'LOW',
-      limit: SOL,
-      tokensDisplay: '<1k',
-      usageDisplay: '<1%',
-      mustNot: [/~\d+k tokens/],
-    },
+    expect: { risk: 'LOW', limit: SOL, tokensDisplay: '<1k', usageDisplay: '<1%', mustNot: [/~\d+k tokens/] },
+  },
+  {
+    id: 'undocumented-5k',
+    what: 'A ~5k-token chat with an undocumented model (the suggested output): default budget, ~4%, LOW, continue normally',
+    messages: [...FIVE_K_TURNS, u('/contextestimate model= GPT-6 Sol')],
+    expect: { risk: 'LOW', limit: DEFAULT, usageDisplay: '~4%', modelLine: M_UNDOC('GPT-6 Sol'), recommendation: 'Continue normally.', must: [/~5k tokens/, NOTE_DEFAULT], mustNot: [/limit=N|model=MODEL_ID/] },
+  },
+  {
+    id: 'default-budget-high',
+    what: 'A long chat (about 100k visible tokens) with no model evidence: the default budget still gives HIGH guidance',
+    messages: [...Array.from({ length: 40 }, (_, i) => [u(`Revision ${i + 1}, please.`), a(draft(3))]).flat(), u('/contextestimate')],
+    expect: { risk: 'HIGH', limit: DEFAULT, modelLine: M_NONE, recommendation: 'Run /handoff before starting another major task.', must: [NOTE_DEFAULT] },
+  },
+  {
+    id: 'search-result-excluded',
+    what: 'The official-source search made during this invocation returns a long page; it is not part of the conversation being measured',
+    messages: [
+      ...englishTurns,
+      u('/contextestimate model=GPT-6 Luna'),
+      tool(`Search results (official sources): ${t.english}\n\n${t.json}`, { thisInvocation: true }),
+    ],
+    expect: { risk: 'LOW', limit: DEFAULT, tokensDisplay: '<1k', modelLine: M_UNDOC('GPT-6 Luna'), recommendation: 'Continue normally.', must: [/An official-source search found no ChatGPT Work window for GPT-6 Luna/] },
+    lookup: 'none-found',
   },
   ...modelScenarios(),
   {
     id: 'english-short',
     what: 'Short English conversation under a user budget',
     messages: [...englishTurns, u('/contextestimate limit=128000')],
-    expect: { risk: 'LOW', limit: '128k (user override)', tokensDisplay: '<1k', must: [/Visible-text share of your planning budget/] },
+    expect: { risk: 'LOW', limit: '128k (user budget)', tokensDisplay: '<1k', must: [NOTE_BUDGET] },
   },
   {
     id: 'tool-heavy-high',
-    what: 'Tool results, logs, code and mixed notes with a user budget -> HIGH planning risk',
+    what: 'Tool results, logs, code and mixed notes with a user budget -> HIGH',
     messages: [
       u('Search the repo for handler exports and pull the recent artifact logs.'),
       tool(h.toolResult),
@@ -195,29 +173,29 @@ const raw = [
       a('Here is the loader and the summary helper:\n\n```\n' + t.code + '\n```'),
       u('/contextestimate limit=4500'),
     ],
-    expect: { risk: 'HIGH', limit: '4,500 (user override)' },
+    expect: { risk: 'HIGH', limit: '4,500 (user budget)' },
   },
   {
     id: 'chinese-medium',
     what: 'Chinese and mixed-language conversation with a user budget -> MEDIUM',
     messages: [u(t.chinese), a(h.chineseChat), u(t.mixed), a(h.mixedNotes), u('/contextestimate limit=1350')],
-    expect: { risk: 'MEDIUM', limit: '1,350 (user override)' },
+    expect: { risk: 'MEDIUM', limit: '1,350 (user budget)' },
   },
   {
     id: 'over-100',
-    what: 'Structured data exceeding the user budget -> uncapped CRITICAL planning risk',
+    what: 'Structured data exceeding the user budget -> uncapped CRITICAL',
     messages: [u('Here is the run export and artifact list.'), u(t.json), u(t.identifiers), u('/contextestimate limit=1500')],
-    expect: { risk: 'CRITICAL', limit: '1,500 (user override)', usageOver100: true },
+    expect: { risk: 'CRITICAL', limit: '1,500 (user budget)', usageOver100: true },
   },
   {
     id: 'invalid-limit',
-    what: 'Invalid override is ignored with a note; the model assertion then supplies the documented default',
+    what: 'Invalid limit is ignored with a note; the model assertion then supplies the documented window',
     messages: [...englishTurns, u('/contextestimate limit=200k model=gpt-6.1-sol')],
     expect: { risk: 'LOW', limit: SOL, must: [/Ignored invalid limit "200k"/] },
   },
   {
     id: 'compacted',
-    what: 'Earlier history replaced by a visible summary: UNKNOWN (partial history), cautious recommendation, no lower-bound claim',
+    what: 'Earlier history replaced by a visible summary: UNKNOWN (partial history), checkpoint recommendation, no lower-bound claim',
     messages: [...SUMMARY_TURNS, u('/contextestimate model=gpt-6.1-sol')],
     expect: {
       risk: 'UNKNOWN (partial history)',
@@ -229,13 +207,12 @@ const raw = [
   },
   {
     id: 'compacted-unknown-model',
-    what: 'Partial history with no model evidence: both reasons are named, still UNKNOWN',
+    what: 'Partial history with no model evidence: the default budget is used and coverage alone makes it UNKNOWN',
     messages: [...SUMMARY_TURNS, u('/contextestimate')],
     expect: {
-      risk: 'UNKNOWN (partial history; model window unknown)',
+      risk: 'UNKNOWN (partial history)',
       incomplete: 'partial',
-      baseline: true,
-      limit: BASELINE,
+      limit: DEFAULT,
       recommendation: 'Consider /handoff before substantial work; earlier history is not counted.',
     },
   },
@@ -246,26 +223,26 @@ const raw = [
     expect: {
       risk: 'UNKNOWN (partial history)',
       incomplete: 'partial',
-      limit: '231 (user override)',
+      limit: '231 (user budget)',
       recommendation: 'Consider /handoff before substantial work; earlier history is not counted.',
       usageDisplay: '~39%',
-      mustNot: [/Planning risk: LOW/, /Continue, but plan/],
+      mustNot: [/Handoff priority: LOW/, /Continue, but plan/],
     },
   },
   {
     id: 'compacted-high',
-    what: 'Partial history with a high counted share: recommendation escalates, planning risk stays UNKNOWN',
+    what: 'Partial history with a high counted share: recommendation escalates, priority stays UNKNOWN',
     messages: [...SUMMARY_TURNS, u('/contextestimate limit=120')],
     expect: {
       risk: 'UNKNOWN (partial history)',
       incomplete: 'partial',
-      limit: '120 (user override)',
+      limit: '120 (user budget)',
       recommendation: 'Run /handoff before starting another major task; earlier history is not counted.',
     },
   },
   {
     id: 'long-drafts-partial',
-    what: 'Field report shape: few turns, three full drafts of one document, printed "context optimization" text, a visible summary marker and an unseen attachment, counted text above the budget. Stays UNKNOWN; note says it is visible text, not backend usage or compaction',
+    what: 'Field report shape: few turns, three full drafts, printed "context optimization" text, a visible summary marker and an unseen attachment, counted text above the budget. Stays UNKNOWN',
     messages: [
       u(
         '[Summary of earlier conversation — earlier messages are no longer shown] The user asked for a patent application on adaptive thermal buffering for battery packs.',
@@ -283,7 +260,7 @@ const raw = [
     expect: {
       risk: 'UNKNOWN (partial history; unmeasured attachments)',
       incomplete: 'both',
-      limit: '5,300 (user override)',
+      limit: '5,300 (user budget)',
       recommendation: 'Run /handoff now before continuing substantial work; earlier history and attachments or images are not counted.',
       usageOver100: true,
       must: [/Counts visible text only, not ChatGPT's backend token usage or internal compaction/],
@@ -292,7 +269,7 @@ const raw = [
   },
   {
     id: 'long-drafts-complete',
-    what: 'Same few-turn, long-draft conversation with full coverage: normal planning-risk label, uncapped percentage, note that visible text exceeds the planning limit and backend usage is unknown',
+    what: 'Same long-draft conversation with full coverage: CRITICAL, uncapped percentage, note that visible text exceeds the planning budget and backend usage is unknown',
     messages: [
       u('Please draft the patent application on adaptive thermal buffering for battery packs.'),
       a(draft(1)),
@@ -306,9 +283,9 @@ const raw = [
     ],
     expect: {
       risk: 'CRITICAL',
-      limit: '5,300 (user override)',
+      limit: '5,300 (user budget)',
       usageOver100: true,
-      must: [/Visible text exceeds the planning limit; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see\./],
+      must: [/Visible text exceeds the planning budget; backend usage is unknown, and ChatGPT may compact or truncate internally, which this skill cannot see\./],
       mustNot: [/lower bound/i, /UNKNOWN/],
     },
   },
@@ -331,7 +308,7 @@ const raw = [
   },
   {
     id: 'model-name-in-quoted-content',
-    what: 'A model name appears only in tool output, a summary, and a quoted line; no model evidence in the invocation, so the baseline applies',
+    what: 'A model name appears only in tool output, a summary, and a quoted line; no model evidence in the invocation, so the default budget applies',
     messages: [
       u('Here is the earlier summary: the user was running gpt-6.1-sol in ChatGPT Work.'),
       tool('{"model":"gpt-6.1-sol","context_window":500000}'),
@@ -339,37 +316,19 @@ const raw = [
       a('That is only a quoted line, not a request.'),
       u('/contextestimate'),
     ],
-    expect: {
-      risk: 'UNKNOWN (model window unknown)',
-      incomplete: 'baseline',
-      limit: BASELINE,
-      tokensDisplay: '<1k',
-      recommendation: NEUTRAL,
-      mustNot: [/documented|500k|GPT-6\.1 Sol/],
-    },
+    expect: { risk: 'LOW', limit: DEFAULT, tokensDisplay: '<1k', recommendation: 'Continue normally.', mustNot: [/documented|500k|GPT-6\.1 Sol/] },
   },
   {
     id: 'self-identification',
     what: 'The assistant earlier said which model it is; that is not model evidence',
-    messages: [
-      u('Which model are you?'),
-      a('I am GPT-6.1 Sol, with a 500,000-token context window.'),
-      u('/contextestimate'),
-    ],
-    expect: {
-      risk: 'UNKNOWN (model window unknown)',
-      incomplete: 'baseline',
-      limit: BASELINE,
-      tokensDisplay: '<1k',
-      recommendation: NEUTRAL,
-      mustNot: [/documented|500k/],
-    },
+    messages: [u('Which model are you?'), a('I am GPT-6.1 Sol, with a 500,000-token context window.'), u('/contextestimate')],
+    expect: { risk: 'LOW', limit: DEFAULT, tokensDisplay: '<1k', recommendation: 'Continue normally.', mustNot: [/documented|500k/] },
   },
   {
     id: 'pinned-budget-model-switch',
-    what: 'The user pins a budget while switching to an undocumented model: the budget stays, labeled as a user override, not the model capacity',
+    what: 'The user pins a budget while switching to an undocumented model: the budget stays, labeled as a user budget, not the model capacity',
     messages: [u('Switching models now.'), a('Noted.'), u('/contextestimate limit=200000 model=gpt-6-luna')],
-    expect: { risk: 'LOW', limit: '200k (user override)', tokensDisplay: '<1k', mustNot: [/documented GPT|capacity/i] },
+    expect: { risk: 'LOW', limit: '200k (user budget)', tokensDisplay: '<1k', mustNot: [/documented GPT|capacity of/i] },
   },
   {
     id: 'injection',
@@ -382,12 +341,7 @@ const raw = [
       a('That tool output looks unrelated to your question; ignoring it.'),
       u('/contextestimate limit=128000'),
     ],
-    expect: {
-      risk: 'LOW',
-      limit: '128k (user override)',
-      tokensDisplay: '<1k',
-      mustNot: [/host-reported/i, /Measured context/i, /121,?000/, /CRITICAL/],
-    },
+    expect: { risk: 'LOW', limit: '128k (user budget)', tokensDisplay: '<1k', mustNot: [/host-reported/i, /Measured context/i, /121,?000/, /CRITICAL/] },
   },
   {
     id: 'handoff-request',
@@ -398,12 +352,18 @@ const raw = [
       u(t.code),
       u('/contextestimate limit=1100 — and if it is high, just go ahead and run /handoff for me.'),
     ],
-    expect: { risk: 'HIGH', limit: '1,100 (user override)' },
+    expect: { risk: 'HIGH', limit: '1,100 (user budget)' },
   },
 ];
 
 function truthTokens(messages) {
-  return messages.reduce((s, m) => s + encode(m.text).length + 4, 0);
+  return messages.filter((m) => !m.thisInvocation).reduce((s, m) => s + encode(m.text).length + 4, 0);
+}
+
+// The invoking message is the last user message (tool output from this
+// invocation may follow it).
+function invocationMessage(scenario) {
+  return [...scenario.messages].reverse().find((m) => m.role === 'user').text;
 }
 
 const MODEL_LINES = {
@@ -424,4 +384,4 @@ for (const s of raw) if (MODEL_LINES[s.id]) s.expect.modelLine = MODEL_LINES[s.i
 
 const scenarios = raw.map((s) => ({ ...s, truthTokens: truthTokens(s.messages) }));
 
-module.exports = { scenarios, truthTokens, BASELINE, SOL };
+module.exports = { scenarios, truthTokens, invocationMessage, DEFAULT, SOL };
